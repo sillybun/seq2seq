@@ -77,11 +77,11 @@ class encoder_rnn(nn.Module):
         return x
 
     @property
-    def regulization_parameters(self) -> vector:
+    def regulization_parameters(self) -> table:
         if self.hyper.encoder_max_rank == -1:
-            return vector([self._J / self.hyper.embedding_dim ** 1.5])
+            return table(J=self._J / self.hyper.embedding_dim ** 1.0)
         else:
-            return vector([self._J_U / math.sqrt(self.hyper.embedding_dim * self.hyper.encoder_max_rank), self._J_V / math.sqrt(self.hyper.embedding_dim * self.hyper.encoder_max_rank)])
+            return table(J_U=self._J_U / math.sqrt(self.hyper.embedding_dim * self.hyper.encoder_max_rank), J_V=self._J_V / math.sqrt(self.hyper.embedding_dim * self.hyper.encoder_max_rank))
 
     def inspect(self) -> table:
         if self.hyper["encoder_max_rank"] == -1:
@@ -129,11 +129,11 @@ class linear_decoder_rnn(nn.Module):
         return 1 / self.hyper.decoder_dim
 
     @property
-    def regulization_parameters(self) -> vector:
+    def regulization_parameters(self) -> table:
         if self.hyper["decoder_max_rank"] == -1:
-            return vector([self._W / self.hyper.decoder_dim ** 1.5])
+            return table(W=self._W / self.hyper.decoder_dim ** 1.0)
         else:
-            return vector([self._W_U / math.sqrt(self.hyper.decoder_dim * self.hyper["decoder_max_rank"]), self._W_V / math.sqrt(self.hyper.decoder_dim * self.hyper["decoder_max_rank"])])
+            return table(W_U=self._W_U / math.sqrt(self.hyper.decoder_dim * self.hyper["decoder_max_rank"]), W_V=self._W_V / math.sqrt(self.hyper.decoder_dim * self.hyper["decoder_max_rank"]))
 
     def inspect(self) -> table:
         if self.hyper["decoder_max_rank"] == -1:
@@ -206,7 +206,7 @@ class linear_decoder_rnn(nn.Module):
 
 class encoder(nn.Module):
 
-    def __init__(self, tau, delta_t, embedding_dim, noise_sigma, input_dim, embedding=None, is_embedding_fixed=True, encoder_bias=False, encoder_max_rank=-1, timer=None):
+    def __init__(self, tau, delta_t, embedding_dim, noise_sigma, input_dim, input_gain=1.0, embedding=None, is_embedding_fixed=True, encoder_bias=False, encoder_max_rank=-1, timer=None):
 
         super().__init__()
         save_args(vars(), ignore=("timer",))
@@ -244,7 +244,7 @@ class encoder(nn.Module):
             batch = sum(sorted_length > index).item()
             if batch == 0:
                 break
-            x[index + 1, :batch, :] = self.rnn(x[index, :batch, :], torch.matmul(u[:batch, index, :], self.embedding), noise_sigma=noise_sigma)
+            x[index + 1, :batch, :] = self.rnn(x[index, :batch, :], torch.matmul(u[:batch, index, :], self.embedding) * self.hyper.input_gain, noise_sigma=noise_sigma)
 
         x = x.transpose(0, 1)
 
@@ -256,11 +256,13 @@ class encoder(nn.Module):
         return ret, final_state
 
     @property
-    def regulization_parameters(self) -> vector:
-        return self.rnn.regulization_parameters
+    def regulization_parameters(self) -> table:
+        return table(rnn=self.rnn.regulization_parameters)
 
     def inspect(self) -> table:
-        return self.rnn.inspect().map(key=lambda x: "encoder." + x)
+        ret = self.rnn.inspect()
+        ret += self.regulization_parameters.flatten().map(value=lambda x: torch.sum(torch.square(x)).item())
+        return ret.map(key=lambda x: "encoder." + x)
 
     def load_state_dict(self, encoder_state):
         if isinstance(encoder_state, nn.Module):
@@ -376,19 +378,21 @@ class decoder(nn.Module):
         return acc.mean()
 
     @property
-    def regulization_parameters(self) -> vector:
-        ret = self.rnn_cell.regulization_parameters
-        ret.append(self.linear_layer / math.sqrt(self.hyper.decoder_dim * self.hyper.output_dim))
+    def regulization_parameters(self) -> table:
+        ret = table()
+        ret.rnn_cell = self.rnn_cell.regulization_parameters
+        ret.linear_layer = self.linear_layer / math.sqrt(self.hyper.decoder_dim * self.hyper.output_dim)
         if not self.hyper["encoder_to_decoder_equal_space"]:
-            ret.append(self.input_to_decoder * math.sqrt(2 / (self.hyper.decoder_dim + self.hyper.encoder_dim)))
+            ret.input_to_decoder = self.input_to_decoder
         return ret
 
     def inspect(self) -> table:
-        ret = self.rnn_cell.inspect().map(key=lambda x: "decoder." + x)
+        ret = self.rnn_cell.inspect()
         rank = min(10, self.hyper.encoder_dim, self.hyper.decoder_dim)
         U, S, V = torch.pca_lowrank(self.input_to_decoder, q=rank)
-        ret.update(table({"decoder.W'.lambda[{}]".format(index + 1): S[index].item() for index in range(rank)}))
-        return ret
+        ret.update(table({"W'.lambda[{}]".format(index + 1): S[index].item() for index in range(rank)}))
+        ret += self.regulization_parameters.flatten().map(value=lambda x: torch.sum(torch.square(x)).item())
+        return ret.map(key=lambda x: "decoder." + x)
 
     def load_state_dict(self, decoder_state):
         if isinstance(decoder_state, nn.Module):

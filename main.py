@@ -14,7 +14,6 @@ def main(parser, **kwargs):
     hyper = table({
             "max_epochs": 100,
             "timer_disable": True,
-            "encoder_max_rank": 20,
             })
     hyper.update(kwargs)
 

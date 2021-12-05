@@ -81,9 +81,13 @@ class Trainer:
         decoded_seq, hidden_state_decoder = self.decoder(final_state, ground_truth_tensor, ground_truth_length, teaching_forcing_ratio=0.5)
 
         loss = self.decoder.loss(ground_truth_tensor, ground_truth_length, decoded_seq)
+
         l2_reg = 0
-        for reg_param in (self.encoder.regulization_parameters + self.decoder.regulization_parameters):
+        for reg_param in self.encoder.regulization_parameters.flatten().values():
             l2_reg += torch.sum(torch.square(reg_param))
+        for reg_param in self.decoder.regulization_parameters.flatten().values():
+            l2_reg += torch.sum(torch.square(reg_param))
+
         loss = loss + self.hyper["l2_reg"] * l2_reg
         accuracy = self.decoder.accuracy(ground_truth_tensor, ground_truth_length, decoded_seq)
         loss.backward()
