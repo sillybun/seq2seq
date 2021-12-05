@@ -56,6 +56,11 @@ class encoder_rnn(nn.Module):
         self.load_states = vector()
         lsd = low_rank(self, self.hyper.embedding_dim, self.hyper.encoder_max_rank, name="J")
         self.load_states.append(lsd)
+        if self.hyper.encoder_max_rank == -1:
+            self._J.gain = self.gain
+        else:
+            self._J_U.gain = self._J_V.gain = math.sqrt(self.gain)
+
         self.alpha = self.hyper["delta_t"] / self.hyper["tau"]
         if self.hyper['encoder_bias']:
             self.bias = nn.Parameter(torch.zeros(1, self.hyper['embedding_dim']))
@@ -79,9 +84,9 @@ class encoder_rnn(nn.Module):
     @property
     def regulization_parameters(self) -> table:
         if self.hyper.encoder_max_rank == -1:
-            return table(J=self._J / self.hyper.embedding_dim ** 1.0)
+            return table(J=self._J * self.gain)
         else:
-            return table(J_U=self._J_U / math.sqrt(self.hyper.embedding_dim * self.hyper.encoder_max_rank), J_V=self._J_V / math.sqrt(self.hyper.embedding_dim * self.hyper.encoder_max_rank))
+            return table(J_U=self._J_U, J_V=self._J_V).map(value=lambda x: x * x.gain)
 
     def inspect(self) -> table:
         if self.hyper["encoder_max_rank"] == -1:
@@ -113,6 +118,10 @@ class linear_decoder_rnn(nn.Module):
         self.load_states = vector()
         lsd = low_rank(self, self.hyper.decoder_dim, self.hyper.decoder_max_rank, name="W")
         self.load_states.append(lsd)
+        if self.hyper["decoder_max_rank"] == -1:
+            self._W.gain = self.gain
+        else:
+            self._W_U.gain = self._W_V.gain = math.sqrt(self.gain)
         if self.hyper["decoder_bias"]:
             self.bias = nn.Parameter(torch.zeros(1, self.hyper["decoder_dim"]))
             self.load_states.append(lambda state: self.b.data.copy_(state["bias"]))
@@ -131,9 +140,9 @@ class linear_decoder_rnn(nn.Module):
     @property
     def regulization_parameters(self) -> table:
         if self.hyper["decoder_max_rank"] == -1:
-            return table(W=self._W / self.hyper.decoder_dim ** 1.0)
+            return table(W=self._W * self.gain)
         else:
-            return table(W_U=self._W_U / math.sqrt(self.hyper.decoder_dim * self.hyper["decoder_max_rank"]), W_V=self._W_V / math.sqrt(self.hyper.decoder_dim * self.hyper["decoder_max_rank"]))
+            return table(W_U=self._W_U, W_V=self._W_V).map(value=lambda x: x * x.gain)
 
     def inspect(self) -> table:
         if self.hyper["decoder_max_rank"] == -1:
@@ -296,8 +305,12 @@ class decoder(nn.Module):
 
     def init(self) -> None:
         nn.init.normal_(self.linear_layer)
+        self.linear_layer.data.mul_(math.sqrt(self.hyper.decoder_dim))
+        self.linear_layer.gain = 1 / self.hyper.decoder_dim
         if not self.hyper["encoder_to_decoder_equal_space"]:
-            nn.init.xavier_normal_(self.input_to_decoder)
+            nn.init.normal_(self.input_to_decoder)
+            self.input_to_decoder.data.mul_(math.sqrt(self.hyper.encoder_dim))
+            self.input_to_decoder.gain = 1 / self.hyper.encoder_dim
 
     def forward(self, hidden_state, ground_truth_tensor, ground_truth_length, teaching_forcing_ratio=0.5):
         """
@@ -316,7 +329,7 @@ class decoder(nn.Module):
         if self.hyper["encoder_to_decoder_equal_space"]:
             hidden_state = torch.tanh(hidden_state[sorted_index, :])
         else:
-            hidden_state = torch.tanh(hidden_state[sorted_index, :]) @ self.input_to_decoder
+            hidden_state = torch.tanh(hidden_state[sorted_index, :]) @ self.input_to_decoder * self.input_to_decoder.gain
         input = torch.zeros(hidden_state.shape[0], self.hyper["input_dim"]).to(hidden_state.device)
 
         batch_size = hidden_state.shape[0]
@@ -324,7 +337,7 @@ class decoder(nn.Module):
 
         outputs = torch.zeros([batch_size, max_length, self.hyper["output_dim"]], device=hidden_state.device)
 
-        decoder_hidden_state = torch.zeros([batch_size, max_length+1, self.hyper["decoder_dim"]], device=hidden_state.device)
+        decoder_hidden_state = torch.zeros([batch_size, max_length + 1, self.hyper["decoder_dim"]], device=hidden_state.device)
         decoder_hidden_state[:, 0, :] = hidden_state
 
         for index in range(max_length):
@@ -334,7 +347,7 @@ class decoder(nn.Module):
 
             hidden_state = self.rnn_cell(hidden_state[:batch, :], input[:batch, :])
 
-            prediction = hidden_state @ self.linear_layer / self.hyper.decoder_dim
+            prediction = hidden_state @ self.linear_layer * self.linear_layer.gain
 
             decoder_hidden_state[:batch, index + 1, :] = hidden_state
             outputs[:batch, index, :] = prediction
@@ -381,15 +394,15 @@ class decoder(nn.Module):
     def regulization_parameters(self) -> table:
         ret = table()
         ret.rnn_cell = self.rnn_cell.regulization_parameters
-        ret.linear_layer = self.linear_layer / math.sqrt(self.hyper.decoder_dim * self.hyper.output_dim)
+        ret.linear_layer = self.linear_layer * self.linear_layer.gain
         if not self.hyper["encoder_to_decoder_equal_space"]:
-            ret.input_to_decoder = self.input_to_decoder
+            ret.input_to_decoder = self.input_to_decoder * self.input_to_decoder.gain
         return ret
 
     def inspect(self) -> table:
         ret = self.rnn_cell.inspect()
         rank = min(10, self.hyper.encoder_dim, self.hyper.decoder_dim)
-        U, S, V = torch.pca_lowrank(self.input_to_decoder, q=rank)
+        U, S, V = torch.pca_lowrank(self.input_to_decoder * self.input_to_decoder.gain, q=rank)
         ret.update(table({"W'.lambda[{}]".format(index + 1): S[index].item() for index in range(rank)}))
         ret += self.regulization_parameters.flatten().map(value=lambda x: torch.sum(torch.square(x)).item())
         return ret.map(key=lambda x: "decoder." + x)

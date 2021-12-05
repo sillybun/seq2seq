@@ -7,6 +7,7 @@ from torchfunction.device import todevice
 from zytlib import vector
 from zytlib.table import table
 from zytlib import path
+from zytlib.wrapper import registered_property
 from torchfunction.device import get_device
 from typing import List, Tuple
 from zytlib.wrapper import FunctionTimer
@@ -91,6 +92,9 @@ class Trainer:
         loss = loss + self.hyper["l2_reg"] * l2_reg
         accuracy = self.decoder.accuracy(ground_truth_tensor, ground_truth_length, decoded_seq)
         loss.backward()
+
+        self.justify_grad()
+
         self.optimizer.step()
         return loss.item(), accuracy.item()
 
@@ -114,7 +118,7 @@ class Trainer:
     def test_dataloader(self):
         return self.dataset.test_dataloader
 
-    @property
+    @registered_property
     def optimizer(self):
         return torch.optim.Adam([{"params": self.encoder.parameters()}, {"params": self.decoder.parameters()}], lr=self.hyper["learning_rate"])
 
@@ -163,10 +167,57 @@ class Trainer:
         self.decoder.eval()
 
     def inspect(self):
-        return self.encoder.inspect() + self.decoder.inspect()
+        with torch.no_grad():
+            ret = self.encoder.inspect() + self.decoder.inspect()
+        return ret
 
     def parameters(self):
         return vector(self.encoder.parameters()) + vector(self.decoder.parameters())
 
     def named_parameters(self) -> List[Tuple[str, nn.Parameter]]:
         return vector(self.encoder.named_parameters()).map(lambda name, x: ("encoder." + name, x)) + vector(self.decoder.named_parameters()).map(lambda name, x: ("decoder." + name, x))
+
+    def check(self):
+        batch = next(iter(self.train_dataloader))
+
+        self.encoder.train()
+        self.decoder.train()
+        self.optimizer.zero_grad()
+        input_encoder, length, ground_truth_tensor, ground_truth_length = todevice(batch, device=self.hyper["device"])
+        hidden_state, final_state = self.encoder(input_encoder, length)
+        decoded_seq, hidden_state_decoder = self.decoder(final_state, ground_truth_tensor, ground_truth_length, teaching_forcing_ratio=0.5)
+
+        loss = self.decoder.loss(ground_truth_tensor, ground_truth_length, decoded_seq)
+        loss.backward()
+        self.justify_grad()
+
+        print("loss", loss.item())
+        print("loss_grad", table(self.encoder.named_parameters()).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
+        print("loss_grad", table(self.decoder.named_parameters()).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
+
+        self.optimizer.zero_grad()
+        l2_reg = 0
+        for reg_param in self.encoder.regulization_parameters.flatten().values():
+            l2_reg += torch.sum(torch.square(reg_param))
+        for reg_param in self.decoder.regulization_parameters.flatten().values():
+            l2_reg += torch.sum(torch.square(reg_param))
+
+        loss = self.hyper["l2_reg"] * l2_reg
+        loss.backward()
+        self.justify_grad()
+
+        print("l2 loss", loss.item())
+        print("l2 loss_grad", table(self.encoder.named_parameters()).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
+        print("l2 loss_grad", table(self.decoder.named_parameters()).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
+
+        self.optimizer.zero_grad()
+
+    def justify_grad(self):
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                if hasattr(param, "gain"):
+                    param.grad.data.mul_(1 / param.gain ** 2)
+
+    def adjust_lr(self, lr_mul=1.0):
+        for param in self.optimizer.param_groups:
+            param["lr"] = param["lr"] * lr_mul

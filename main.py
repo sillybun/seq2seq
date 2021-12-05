@@ -14,6 +14,11 @@ def main(parser, **kwargs):
     hyper = table({
             "max_epochs": 100,
             "timer_disable": True,
+            "l2_reg": 0.01,
+            "learning_rate": 1e-3,
+            "embedding_size": 4096,
+            "datapath": "dataset/dataset_train_rank2.db",
+            "embedding": "dataset/embedding_inputdim_6_embeddingdim_4096_round_without_normalize.db"
             })
     hyper.update(kwargs)
 
@@ -21,6 +26,8 @@ def main(parser, **kwargs):
 
     if hyper["load_model_path"] != "":
         t.load_state_dict(hyper["load_model_path"])
+
+    t.check()
 
     logger = Logger(True, True)
     logger.info("running command: python " + " ".join(sys.argv))
@@ -88,12 +95,49 @@ def main(parser, **kwargs):
             logger.variable(key, value)
         return epoch
 
-    try:
-        for epoch in range(hyper["max_epochs"]):
+    for epoch in range(hyper["max_epochs"]):
+        try:
             loop(epoch)
-    except Exception as e:
-        logger.exception(e)
-        raise e
+        except KeyboardInterrupt:
+            select = vector("quit|lr|l2_reg|save|freeze".split("|")).filter(lambda x: len(x)).fuzzy_search()
+            if select is None:
+                continue
+            elif select == "quit":
+                return
+            elif select == "save":
+                confirm = input(f"save model to {saved_path}, [yes|no]:")
+                if confirm == "yes":
+                    t.save(saved_path)
+                quit_or_not = input(f"quit? [yes|no]:")
+                if quit_or_not:
+                    return
+                else:
+                    continue
+            elif select == "lr":
+                print("current learing rate:")
+                for param in t.optimizer.param_groups:
+                    print(param["lr"])
+                lr_mul = float(input("lr *= "))
+                t.adjust_lr(lr_mul)
+                print("current learing rate:")
+                for param in t.optimizer.param_groups:
+                    print(param["lr"])
+            elif select == "l2_reg":
+                print("current l2 reg", t.hyper.l2_reg)
+                t.hyper.l2_reg = float(input("l2 reg="))
+                print("current l2 reg", t.hyper.l2_reg)
+            elif select == "freeze":
+                print("current param and requires_grad")
+                print(table(t.named_parameters()).map(value=lambda x: x.requires_grad))
+                selected = table(t.named_parameters()).keys().append(None).fuzzy_search()
+                if selected is None:
+                    continue
+                else:
+                    table(t.named_parameters())[selected].requires_grad = False
+
+        except Exception as e:
+            logger.exception(e)
+            raise e
 
     logger.plot_variable_dict(logger.variable_dict, saved_path=path("Log") / path("plot") / path("trainingstep_" + logger.f_name).with_ext("pdf"), hline=["bottom"])
     t.save(saved_path)
@@ -108,7 +152,7 @@ if __name__ == "__main__":
     parser.add_argument("--decoder_dim", default=512, type=int)
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--noise_sigma", default=0.05, type=float)
-    parser.add_argument("--learning_rate", default=2e-5, type=float)
+    parser.add_argument("--learning_rate", default=1.0, type=float)
     parser.add_argument("--datapath", default="dataset/dataset_rank_3_num_items_6_overlap_1_repeat_100.db", type=str)
     parser.add_argument("--embedding", default="dataset/embedding_inputdim_6_embeddingdim_1024_round.db", type=str)
     parser.add_argument("--non_linear_decoder", dest="linear_decoder", action="store_false")
