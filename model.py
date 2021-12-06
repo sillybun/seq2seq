@@ -9,9 +9,10 @@ from torchfunction.lossfunc import softmax_cross_entropy_with_logits_sparse
 from zytlib.table import table
 import math
 
-def low_rank(self, n, r, name="J"):
+def low_rank(self, n, r, name="J", order_one_init=False):
     self.__setattr__("_" + name + "_r", r)
     if r == -1:
+        if 
         self.__setattr__("_" + name, nn.Parameter(torch.randn(n, n) * math.sqrt(n)))
     else:
         self.__setattr__("_" + name + "_V", nn.Parameter(torch.randn(n, r)))

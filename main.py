@@ -166,6 +166,7 @@ if __name__ == "__main__":
     parser.add_argument("--freeze_parameter", nargs="+")
     parser.add_argument("--save_model_every_epoch_num", default=100, type=int)
     parser.add_argument("--timer_enable", dest="timer_disable", action="store_false")
+    parser.add_argument("--clip_grad", default=0.1, type=float)
     hyper, unknown = parser.parse_known_args()
     print("unknown", unknown)
     hyper = table(hyper)

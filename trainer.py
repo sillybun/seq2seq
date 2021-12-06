@@ -36,6 +36,7 @@ class Trainer:
                 "decoder_max_rank": -1,
                 "freeze_parameter": [],
                 "timer_disable": True,
+                "clip_grad": 0.1,
                 })
         self.hyper.update_exist(kwargs)
         if self.hyper.key_not_here(kwargs):
@@ -217,6 +218,8 @@ class Trainer:
             if param.requires_grad:
                 if hasattr(param, "gain"):
                     param.grad.data.mul_(1 / param.gain ** 2)
+                if self.hyper.clip_grad > 0:
+                    param.grad.data.clip_(-self.hyper.clip_grad, self.hyper.clip_grad)
 
     def adjust_lr(self, lr_mul=1.0):
         for param in self.optimizer.param_groups:
