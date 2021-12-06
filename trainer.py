@@ -84,7 +84,7 @@ class Trainer:
         self.decoder.train()
         self.optimizer.zero_grad()
         input_encoder, length, ground_truth_tensor, ground_truth_length = todevice(batch, device=self.hyper["device"])
-        hidden_state, final_state = self.encoder(input_encoder, length)
+        final_state = self.encoder(input_encoder, length, only_final_state=True)
         decoded_seq, hidden_state_decoder = self.decoder(final_state, ground_truth_tensor, ground_truth_length, teaching_forcing_ratio=0.5)
 
         loss = self.decoder.loss(ground_truth_tensor, ground_truth_length, decoded_seq)
@@ -102,19 +102,20 @@ class Trainer:
         self.justify_grad()
 
         self.optimizer.step()
-        return loss.item(), accuracy.item()
+        return loss.item(), accuracy
 
     def test_step(self, batch, epoch, index):
         self.encoder.eval()
         self.decoder.eval()
         input_encoder, length, ground_truth_tensor, ground_truth_length, in_train = todevice(batch, device=self.hyper["device"])
         with torch.no_grad():
-            hidden_state, final_state = self.encoder(input_encoder, length)
+            # hidden_state, final_state = self.encoder(input_encoder, length)
+            final_state = self.encoder(input_encoder, length, only_final_state=True)
             decoded_seq, hidden_state_seq = self.decoder(final_state, torch.zeros_like(ground_truth_tensor).fill_(-1), ground_truth_length, teaching_forcing_ratio=0.0)
 
             loss = self.decoder.loss(ground_truth_tensor, ground_truth_length, decoded_seq)
             accuracy = self.decoder.accuracy(ground_truth_tensor, ground_truth_length, decoded_seq)
-        return loss.item(), accuracy.item()
+        return loss.item(), accuracy
 
     @property
     def train_dataloader(self):
@@ -190,7 +191,7 @@ class Trainer:
         self.decoder.train()
         self.optimizer.zero_grad()
         input_encoder, length, ground_truth_tensor, ground_truth_length = todevice(batch, device=self.hyper["device"])
-        hidden_state, final_state = self.encoder(input_encoder, length)
+        final_state = self.encoder(input_encoder, length, only_final_state=True)
         decoded_seq, hidden_state_decoder = self.decoder(final_state, ground_truth_tensor, ground_truth_length, teaching_forcing_ratio=0.5)
 
         loss = self.decoder.loss(ground_truth_tensor, ground_truth_length, decoded_seq)

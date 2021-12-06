@@ -24,6 +24,11 @@ def low_rank(self, n, r, name="J", order_one_init=False):
             return getattr(self, f"_{name}")
         else:
             return getattr(self, f"_{name}_U") @ getattr(self, f"_{name}_V").T
+    def rmul(self, x):
+        if getattr(self, f"_{name}_r") == -1:
+            return torch.matmul(x, getattr(self, f"_{name}"))
+        else:
+            return torch.matmul(torch.matmul(x, getattr(self, f"_{name}_U")), getattr(self, f"_{name}_V").T)
     def load_state_dict(state: table):
         max_rank = r
         if isinstance(state, nn.Module):
@@ -46,6 +51,7 @@ def low_rank(self, n, r, name="J", order_one_init=False):
             getattr(self, f"_{name}").data.copy_(U @ V.T)
     if not hasattr(self, name):
         setattr(self.__class__, name, property(func))
+        setattr(self.__class__, name + "_rmul", rmul)
     return load_state_dict
 
 class encoder_rnn(nn.Module):
@@ -81,7 +87,8 @@ class encoder_rnn(nn.Module):
         if self.hyper['encoder_bias']:
             I = I + self.bias
 
-        x = (1 - self.alpha) * x + self.alpha *  (torch.matmul(torch.tanh(x), self.J * self.gain) + I + noise)
+        # x = (1 - self.alpha) * x + self.alpha * (torch.matmul(torch.tanh(x), self.J * self.gain) + I + noise)
+        x = (1 - self.alpha) * x + self.alpha * (self.J_rmul(torch.tanh(x)) * self.gain + I + noise)
         return x
 
     @property
@@ -130,10 +137,9 @@ class linear_decoder_rnn(nn.Module):
             self.load_states.append(lambda state: self.b.data.copy_(state["bias"]))
 
     def forward(self, h, I):
+        h = self.W_rmul(h) * self.gain
         if self.hyper["decoder_bias"]:
-            h = h @ self.W * self.gain + self.bias
-        else:
-            h = h @ self.W * self.gain
+            h = h + self.bias
         return h
 
     @registered_property
@@ -235,7 +241,7 @@ class encoder(nn.Module):
         if timer is not None:
             self.forward = timer(self.forward)
 
-    def forward(self, u, length, noise_sigma=None):
+    def forward(self, u, length, noise_sigma=None, only_final_state=False):
         """
         u.shape: [batch, time, input_dim]
         length.shape: [batch]
@@ -265,7 +271,10 @@ class encoder(nn.Module):
 
         final_state = torch.gather(ret, 1, length.view(batch_size, 1, 1).expand(batch_size, 1, self.hyper['embedding_dim'])).squeeze(1)
 
-        return ret, final_state
+        if only_final_state:
+            return final_state
+        else:
+            return ret, final_state
 
     @property
     def regulization_parameters(self) -> table:
@@ -386,14 +395,15 @@ class decoder(nn.Module):
             prediction: [batch, max_length, output_dim]
         """
 
-        mask = torch.zeros_like(ground_truth, dtype=torch.bool)
-        for index in range(len(ground_truth_length)):
-            mask[index, :ground_truth_length[index]] = 1
-        prediction_label = prediction.argmax(-1)
-        correct = (prediction_label == ground_truth) * mask
-        correct_num = correct.sum(-1)
-        acc = correct_num / ground_truth_length
-        return acc.mean()
+        with torch.no_grad():
+            mask = torch.zeros_like(ground_truth, dtype=torch.bool)
+            for index in range(len(ground_truth_length)):
+                mask[index, :ground_truth_length[index]] = 1
+            prediction_label = prediction.argmax(-1)
+            correct = (prediction_label == ground_truth) * mask
+            correct_num = correct.sum(-1)
+            acc = correct_num / ground_truth_length
+            return acc.mean().item()
 
     @property
     def regulization_parameters(self) -> table:
