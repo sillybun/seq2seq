@@ -37,6 +37,7 @@ class Trainer:
                 "freeze_parameter": [],
                 "timer_disable": True,
                 "clip_grad": 0.1,
+                "order_one_init": False,
                 })
         self.hyper.update_exist(kwargs)
         if self.hyper.key_not_here(kwargs):
@@ -55,7 +56,9 @@ class Trainer:
                  is_embedding_fixed = self.hyper["is_embedding_fixed"],
                  encoder_bias = self.hyper["encoder_bias"],
                  encoder_max_rank = self.hyper["encoder_max_rank"],
-                 timer = self.timer.timer).to(self.device)
+                 timer = self.timer.timer,
+                 order_one_init = self.hyper.order_one_init,
+                 ).to(self.device)
         self.encoder.embedding = self.encoder.embedding.to(self.device)
         self.decoder = decoder(self.hyper["decoder_dim"],
                  self.hyper["embedding_size"],
@@ -66,7 +69,9 @@ class Trainer:
                  decoder_bias = self.hyper["decoder_bias"],
                  encoder_to_decoder_equal_space = self.hyper["encoder_to_decoder_equal_space"],
                  decoder_max_rank = self.hyper["decoder_max_rank"],
-                 timer = self.timer.timer).to(self.device)
+                 timer = self.timer.timer,
+                 order_one_init = self.hyper.order_one_init,
+                 ).to(self.device)
 
         for name, param in self.named_parameters():
             if vector(self.hyper["freeze_parameter"]).any(lambda x: name.startswith(x)):

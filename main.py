@@ -32,8 +32,8 @@ def main(parser, **kwargs):
     logger = Logger(True, True)
     logger.info("running command: python " + " ".join(sys.argv))
     logger.log_parser(parser)
-    logger.info(t.hyper)
-    logger.info(t.named_parameters().map(lambda name, x: (name, x.shape, x.requires_grad)))
+    logger.info(t.hyper, sep="\n")
+    logger.info(t.named_parameters().map(lambda name, x: (name, x.shape, x.requires_grad)), sep="\n")
 
     if hyper["model_name"]:
         saved_path = path("model") / path(hyper["model_name"]).with_ext("pt")
@@ -167,6 +167,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_model_every_epoch_num", default=100, type=int)
     parser.add_argument("--timer_enable", dest="timer_disable", action="store_false")
     parser.add_argument("--clip_grad", default=0.1, type=float)
+    parser.add_argument("--order_one_init", dest="order_one_init", action="store_true")
     hyper, unknown = parser.parse_known_args()
     print("unknown", unknown)
     hyper = table(hyper)
