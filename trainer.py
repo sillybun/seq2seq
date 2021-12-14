@@ -115,6 +115,8 @@ class Trainer:
 
         self.justify_grad()
         self.optimizer.step()
+
+        assert return_info.values().all(lambda x: not isinstance(x, torch.Tensor))
         return loss.item(), accuracy, return_info
 
     def test_step(self, batch, epoch, index):
