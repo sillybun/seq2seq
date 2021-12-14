@@ -158,7 +158,7 @@ def data_collect_fn(batch, istrain):
 class SimulateEmbedding:
 
     @overload
-    def __init__(self, embedding=1024, input_dim=6, method="randn", normalized=False, gain_factor=1, noise=0): ...
+    def __init__(self, embedding_dim=1024, input_dim=6, method="randn", normalized=False, gain_factor=1, noise=0): ...
 
     def __init__(self, **kwargs):
 
@@ -221,6 +221,10 @@ def generate_embedding():
     se.simulate()
     se.save("dataset/embedding_inputdim_6_embeddingdim_4096_round_without_normalize.db")
     # se.save("dataset/embedding_inputdim_6_embeddingdim_2048_round_without_normalize.db")
+
+    se = SimulateEmbedding(embedding_dim=4096, input_dim=2, method="round", normalized=False)
+    se.simulate()
+    se.save("dataset/embedding_inputdim_2_embeddingdim_4096_round_without_normalize.db")
 
 class SimulatedDataset:
 
