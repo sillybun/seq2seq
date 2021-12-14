@@ -238,6 +238,8 @@ class SimulatedDataset:
         else:
             assert isinstance(self.raw_test, dict)
             self.test_data = table(self.raw_test).map(value=lambda x: dataset(x, num_items))
+        if "info" in content:
+            self.info = content.info
 
     @property
     def train_dataloader(self):

@@ -18,7 +18,7 @@ class Trainer:
         self.hyper = table({"datapath": "dataset/dataset_rank_3_num_items_6_overlap_1_repeat_100.db",
                 "delta_t": 20,
                 "tau": 100,
-                "embedding_size": 1024,
+                "embedding_dim": 1024,
                 "decoder_dim": 512,
                 "noise_sigma": 0.05,
                 "input_dim": 6,
@@ -38,18 +38,23 @@ class Trainer:
                 "timer_disable": True,
                 "clip_grad": 0.1,
                 "order_one_init": False,
+                "residual_loss": 0,
                 })
         self.hyper.update_exist(kwargs)
         if self.hyper.key_not_here(kwargs):
             print("unknown key:", self.hyper.key_not_here(kwargs))
+        self.hyper.lock_key()
 
         self.device = get_device(self.hyper["device"])
         self.timer = FunctionTimer(disable=self.hyper.timer_disable)
         if isinstance(self.hyper["embedding"], str):
+            se = SimulateEmbedding.load(self.hyper["embedding"])
+            self.hyper.embedding_dim = se.hyper.embedding_dim
+            self.hyper.input_dim = se.hyper.input_dim
             self.hyper["embedding"] = SimulateEmbedding.load(self.hyper["embedding"]).embedding
         self.encoder = encoder(self.hyper["tau"],
                  self.hyper["delta_t"],
-                 self.hyper["embedding_size"],
+                 self.hyper["embedding_dim"],
                  self.hyper["noise_sigma"],
                  self.hyper["input_dim"],
                  embedding = self.hyper["embedding"],
@@ -61,7 +66,7 @@ class Trainer:
                  ).to(self.device)
         self.encoder.embedding = self.encoder.embedding.to(self.device)
         self.decoder = decoder(self.hyper["decoder_dim"],
-                 self.hyper["embedding_size"],
+                 self.hyper["embedding_dim"],
                  self.hyper["input_dim"],
                  self.hyper["input_dim"],
                  self.encoder.embedding,
@@ -80,6 +85,7 @@ class Trainer:
         self.dataset = SimulatedDataset(self.hyper["datapath"], self.hyper["input_dim"], self.hyper["batch_size"])
 
     def train_step(self, batch, epoch=-1, index=-1):
+        return_info = table()
         self.encoder.train()
         self.decoder.train()
         self.optimizer.zero_grad()
@@ -88,21 +94,28 @@ class Trainer:
         decoded_seq, hidden_state_decoder = self.decoder(final_state, ground_truth_tensor, ground_truth_length, teaching_forcing_ratio=0.5)
 
         loss = self.decoder.loss(ground_truth_tensor, ground_truth_length, decoded_seq)
+        if self.hyper.residual_loss > 0:
+            residual_loss, _ = self.decoder.residual_loss(hidden_state_decoder, ground_truth_length)
+            loss += self.hyper.residual_loss * residual_loss
+            residual_loss = self.hyper.residual_loss * residual_loss.item()
+            return_info.residual_loss = residual_loss
+        else:
+            residual_loss = 0
 
         l2_reg = 0
         for reg_param in self.encoder.regulization_parameters.flatten().values():
             l2_reg += torch.sum(torch.square(reg_param))
         for reg_param in self.decoder.regulization_parameters.flatten().values():
             l2_reg += torch.sum(torch.square(reg_param))
+        return_info.l2_reg = self.hyper["l2_reg"] * l2_reg.item()
 
         loss = loss + self.hyper["l2_reg"] * l2_reg
         accuracy = self.decoder.accuracy(ground_truth_tensor, ground_truth_length, decoded_seq)
         loss.backward()
 
         self.justify_grad()
-
         self.optimizer.step()
-        return loss.item(), accuracy
+        return loss.item(), accuracy, return_info
 
     def test_step(self, batch, epoch, index):
         self.encoder.eval()

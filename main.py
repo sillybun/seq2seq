@@ -12,13 +12,15 @@ import torch
 def main(parser, **kwargs):
 
     hyper = table({
-            "max_epochs": 100,
-            "timer_disable": True,
-            "l2_reg": 0.01,
-            "learning_rate": 1e-3,
-            "embedding_size": 4096,
+            # "max_epochs": 100,
+            # "timer_disable": True,
+            # "l2_reg": 0.01,
+            # "learning_rate": 1e-3,
+            # "embedding_size": 4096,
             "datapath": "dataset/dataset_train_rank2.db",
-            "embedding": "dataset/embedding_inputdim_6_embeddingdim_4096_round_without_normalize.db"
+            "embedding": "dataset/embedding_inputdim_6_embeddingdim_4096_round_without_normalize.db",
+            "datapath": "dataset/dataset_item_2_train_rank2.db",
+            "embedding": "dataset/embedding_inputdim_2_embeddingdim_4096_round_without_normalize.db",
             })
     hyper.update(kwargs)
 

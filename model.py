@@ -6,6 +6,7 @@ from zytlib import vector
 from zytlib.wrapper import registered_property
 import random
 from torchfunction.lossfunc import softmax_cross_entropy_with_logits_sparse
+from torchfunction.select import select_index_by_batch
 from zytlib.table import table
 import math
 
@@ -326,6 +327,9 @@ class decoder(nn.Module):
                 self.input_to_decoder.data.mul_(math.sqrt(self.hyper.encoder_dim))
             self.input_to_decoder.gain = 1 / self.hyper.encoder_dim
 
+    def readout(self, hidden_state):
+        return hidden_state @ self.linear_layer * self.linear_layer.gain
+
     def forward(self, hidden_state, ground_truth_tensor, ground_truth_length, teaching_forcing_ratio=0.5):
         """
         input:
@@ -361,7 +365,8 @@ class decoder(nn.Module):
 
             hidden_state = self.rnn_cell(hidden_state[:batch, :], input[:batch, :])
 
-            prediction = hidden_state @ self.linear_layer * self.linear_layer.gain
+            # prediction = hidden_state @ self.linear_layer * self.linear_layer.gain
+            prediction = self.readout(hidden_state)
 
             decoder_hidden_state[:batch, index + 1, :] = hidden_state
             outputs[:batch, index, :] = prediction
@@ -387,7 +392,18 @@ class decoder(nn.Module):
         ret = softmax_cross_entropy_with_logits_sparse(prediction, ground_truth, reduction="none", mask=mask)
         return ret.sum(-1).mean()
 
-    def accuracy(self, ground_truth, ground_truth_length, prediction):
+    def residual_loss(self, hidden_state_decoder: torch.Tensor, ground_truth_length: torch.Tensor):
+        """
+        input:
+            hidden_state_decoder: [batch, max_length+1, decoder_dim]
+            ground_truth_length: [batch]
+        """
+        # last_decoded = torch.gather(hidden_state_decoder, dim=1, ground_truth_length.view())
+        last_decoded = select_index_by_batch(hidden_state_decoder, ground_truth_length + 1)
+        projection = self.readout(last_decoded)
+        return torch.sum(torch.square(projection)), projection
+
+    def accuracy(self, ground_truth: torch.Tensor, ground_truth_length: torch.Tensor, prediction: torch.Tensor) -> float:
         """
         input:
             ground_truth: [batch, max_length]
