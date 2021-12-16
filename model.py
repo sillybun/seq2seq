@@ -101,7 +101,7 @@ class encoder_rnn(nn.Module):
 
     def inspect(self) -> table:
         if self.hyper["encoder_max_rank"] == -1:
-            rank = min(20, self.hyper.embedding_dim)
+            rank = min(10, self.hyper.embedding_dim)
         else:
             rank = self.hyper["encoder_max_rank"]
         U, S, V = torch.pca_lowrank(self.J * self.gain, q=rank)
@@ -156,7 +156,7 @@ class linear_decoder_rnn(nn.Module):
 
     def inspect(self) -> table:
         if self.hyper["decoder_max_rank"] == -1:
-            rank = min(20, self.hyper.decoder_dim)
+            rank = min(10, self.hyper.decoder_dim)
         else:
             rank = self.hyper["decoder_max_rank"]
         U, S, V = torch.pca_lowrank(self.W * self.gain, q=rank)
@@ -398,10 +398,9 @@ class decoder(nn.Module):
             hidden_state_decoder: [batch, max_length+1, decoder_dim]
             ground_truth_length: [batch]
         """
-        # last_decoded = torch.gather(hidden_state_decoder, dim=1, ground_truth_length.view())
-        last_decoded = select_index_by_batch(hidden_state_decoder, ground_truth_length + 1)
-        projection = self.readout(last_decoded)
-        return torch.sum(torch.square(projection)), projection
+        last_decoded = select_index_by_batch(hidden_state_decoder, ground_truth_length)
+        projection = self.readout(self.rnn_cell(last_decoded, None))
+        return torch.sum(torch.square(projection), dim=1).mean(), projection
 
     def accuracy(self, ground_truth: torch.Tensor, ground_truth_length: torch.Tensor, prediction: torch.Tensor) -> float:
         """

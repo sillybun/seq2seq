@@ -39,6 +39,7 @@ class Trainer:
                 "clip_grad": 0.1,
                 "order_one_init": False,
                 "residual_loss": 0,
+                "load_model_path": None,
                 })
         self.hyper.update_exist(kwargs)
         if self.hyper.key_not_here(kwargs):
@@ -84,6 +85,9 @@ class Trainer:
 
         self.dataset = SimulatedDataset(self.hyper["datapath"], self.hyper["input_dim"], self.hyper["batch_size"])
 
+        if self.hyper.load_model_path:
+            self.load_state_dict(self.hyper.load_model_path)
+
     def train_step(self, batch, epoch=-1, index=-1):
         return_info = table()
         self.encoder.train()
@@ -94,6 +98,7 @@ class Trainer:
         decoded_seq, hidden_state_decoder = self.decoder(final_state, ground_truth_tensor, ground_truth_length, teaching_forcing_ratio=0.5)
 
         loss = self.decoder.loss(ground_truth_tensor, ground_truth_length, decoded_seq)
+        return_info.ce_loss = loss.item()
         if self.hyper.residual_loss > 0:
             residual_loss, _ = self.decoder.residual_loss(hidden_state_decoder, ground_truth_length)
             loss += self.hyper.residual_loss * residual_loss
@@ -214,8 +219,8 @@ class Trainer:
         self.justify_grad()
 
         print("loss", loss.item())
-        print("loss_grad", table(self.encoder.named_parameters()).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
-        print("loss_grad", table(self.decoder.named_parameters()).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
+        print("loss_grad", table(self.encoder.named_parameters()).filter(value=lambda x: x.requires_grad).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
+        print("loss_grad", table(self.decoder.named_parameters()).filter(value=lambda x: x.requires_grad).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
 
         self.optimizer.zero_grad()
         l2_reg = 0
@@ -229,8 +234,8 @@ class Trainer:
         self.justify_grad()
 
         print("l2 loss", loss.item())
-        print("l2 loss_grad", table(self.encoder.named_parameters()).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
-        print("l2 loss_grad", table(self.decoder.named_parameters()).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
+        print("l2 loss_grad", table(self.encoder.named_parameters()).filter(value=lambda x: x.requires_grad).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
+        print("l2 loss_grad", table(self.decoder.named_parameters()).filter(value=lambda x: x.requires_grad).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
 
         self.optimizer.zero_grad()
 

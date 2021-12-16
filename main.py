@@ -12,22 +12,21 @@ import torch
 def main(parser, **kwargs):
 
     hyper = table({
-            # "max_epochs": 100,
-            # "timer_disable": True,
-            # "l2_reg": 0.01,
-            # "learning_rate": 1e-3,
-            # "embedding_size": 4096,
-            "datapath": "dataset/dataset_train_rank2.db",
-            "embedding": "dataset/embedding_inputdim_6_embeddingdim_4096_round_without_normalize.db",
-            "datapath": "dataset/dataset_item_2_train_rank2.db",
-            "embedding": "dataset/embedding_inputdim_2_embeddingdim_4096_round_without_normalize.db",
+            "max_epochs": 100,
+            "timer_disable": True,
+            "l2_reg": 0.01,
+            "learning_rate": 1e-3,
+            # "datapath": "dataset/dataset_train_rank2.db",
+            # "embedding": "dataset/embedding_inputdim_6_embeddingdim_4096_round_without_normalize.db",
+            # "datapath": "dataset/dataset_item_2_train_rank2.db",
+            # "embedding": "dataset/embedding_inputdim_2_embeddingdim_4096_round_without_normalize.db",
             })
     hyper.update(kwargs)
 
     t = Trainer(**hyper)
 
-    if hyper["load_model_path"] != "":
-        t.load_state_dict(hyper["load_model_path"])
+    # if hyper["load_model_path"] != "":
+    #     t.load_state_dict(hyper["load_model_path"])
 
     t.check()
 
@@ -47,11 +46,15 @@ def main(parser, **kwargs):
     @repeat_trigger(lambda ret: t.save(checkpoint_dir / logger.f_name.with_ext("pt").name_add("_{}".format(ret.ret))), n=hyper["save_model_every_epoch_num"], start=hyper["save_model_every_epoch_num"])
     def loop(epoch):
         train_loss, train_acc = vector(), vector()
+        return_info_collector = table()
 
         for index, batch in tqdm(enumerate(t.train_dataloader), total=len(t.train_dataloader)):
-            loss, acc = t.train_step(batch, epoch, index)
+            loss, acc, return_info = t.train_step(batch, epoch, index)
             train_loss.append(loss)
             train_acc.append(acc)
+            return_info_collector.merge(return_info, lambda x, y: (x[0] + y, x[1] + 1), default=(0, 0))
+
+        return_info_collector = return_info_collector.map(value=lambda x: x[0] / x[1])
 
         if isinstance(t.test_dataloader, dict):
             test_loss, test_acc = table(), table()
@@ -68,9 +71,10 @@ def main(parser, **kwargs):
                 test_acc[name] = ta
 
             logger.info(f"[{epoch}]/[{hyper['max_epochs']}], train_loss: {train_loss.mean()}, train_acc: {train_acc.mean()}, test_loss: {test_loss.map(value=lambda x: x.mean())}, test_acc: {test_acc.map(value=lambda x: x.mean())}")
-
             logger.variable("train_loss", train_loss.mean())
             logger.variable("train_acc", train_acc.mean())
+            for key, value in return_info_collector.items():
+                logger.variable(f"train[{key}]", value)
 
             for name, tl in test_loss.items():
                 logger.variable("test_loss[{}]".format(name), tl.mean())
@@ -86,9 +90,10 @@ def main(parser, **kwargs):
                 test_acc.append(acc)
 
             logger.info(f"[{epoch}]/[{hyper['max_epochs']}], train_loss: {train_loss.mean()}, train_acc: {train_acc.mean()}, test_loss: {test_loss.mean()}, test_acc: {test_acc.mean()}")
-
             logger.variable("train_loss", train_loss.mean())
             logger.variable("train_acc", train_acc.mean())
+            for key, value in return_info_collector.items():
+                logger.variable(f"train[{key}]", value)
             logger.variable("test_loss", test_loss.mean())
             logger.variable("test_acc", test_acc.mean())
 
@@ -170,6 +175,7 @@ if __name__ == "__main__":
     parser.add_argument("--timer_enable", dest="timer_disable", action="store_false")
     parser.add_argument("--clip_grad", default=0.1, type=float)
     parser.add_argument("--order_one_init", dest="order_one_init", action="store_true")
+    parser.add_argument("--residual_loss", default=0, type=float)
     hyper, unknown = parser.parse_known_args()
     print("unknown", unknown)
     hyper = table(hyper)
