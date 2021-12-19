@@ -40,6 +40,7 @@ class Trainer:
                 "order_one_init": False,
                 "residual_loss": 0,
                 "load_model_path": None,
+                "train_items_crop": -1,
                 })
         self.hyper.update_exist(kwargs)
         if self.hyper.key_not_here(kwargs):
@@ -83,7 +84,7 @@ class Trainer:
             if vector(self.hyper["freeze_parameter"]).any(lambda x: name.startswith(x)):
                 param.requires_grad = False
 
-        self.dataset = SimulatedDataset(self.hyper["datapath"], self.hyper["input_dim"], self.hyper["batch_size"])
+        self.dataset = SimulatedDataset(self.hyper["datapath"], self.hyper["input_dim"], self.hyper["batch_size"], train_items_crop=self.hyper.train_items_crop)
 
         if self.hyper.load_model_path:
             self.load_state_dict(self.hyper.load_model_path)

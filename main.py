@@ -176,6 +176,7 @@ if __name__ == "__main__":
     parser.add_argument("--clip_grad", default=0.1, type=float)
     parser.add_argument("--order_one_init", dest="order_one_init", action="store_true")
     parser.add_argument("--residual_loss", default=0, type=float)
+    parser.add_argument("--train_items_crop", default=-1, type=int)
     hyper, unknown = parser.parse_known_args()
     print("unknown", unknown)
     hyper = table(hyper)

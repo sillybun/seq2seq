@@ -111,9 +111,10 @@ def generate_train_test(**kwargs):
 
 class dataset(torch.utils.data.dataset.Dataset):
 
-    def __init__(self, data, num_items):
+    def __init__(self, data, num_items, items_crop=-1):
         self.data = data
         self.num_items = num_items
+        self.items_crop = items_crop
 
     def __len__(self):
         return len(self.data)
@@ -138,6 +139,8 @@ class dataset(torch.utils.data.dataset.Dataset):
             input_encoder[pointer:pointer+rank_time[i], items[i]] = 1.0
             pointer += rank_time[i] + delay_time[i]
         ground_truth = torch.LongTensor(items)
+        if self.items_crop > 0:
+            ground_truth = ground_truth[:self.items_crop]
         if self.is_train:
             return input_encoder, ground_truth
         else:
@@ -228,16 +231,17 @@ def generate_embedding():
 
 class SimulatedDataset:
 
-    def __init__(self, datapath, num_items, batch_size):
+    def __init__(self, datapath, num_items, batch_size, train_items_crop=-1, test_items_crop=-1):
         save_args(vars())
         content = table.load(datapath)
         self.raw_train, self.raw_test = content["train"], content["test"]
-        self.train_data = dataset(self.raw_train, num_items)
+        self.train_data = dataset(self.raw_train, num_items, train_items_crop)
         if isinstance(self.raw_test, list):
-            self.test_data = dataset(self.raw_test, num_items)
+            self.test_data = dataset(self.raw_test, num_items, test_items_crop)
         else:
             assert isinstance(self.raw_test, dict)
-            self.test_data = table(self.raw_test).map(value=lambda x: dataset(x, num_items))
+            self.raw_test = table(self.raw_test)
+            self.test_data = self.raw_test.map(value=lambda x: dataset(x, num_items, test_items_crop))
         if "info" in content:
             self.info = content.info
 
@@ -264,3 +268,17 @@ class SimulatedDataset:
             return 4
         else:
             return 0
+
+    def __str__(self):
+        ret = "Dataset: \n"
+        ret += vector("\ttrain:", len(self.train_data), self.raw_train.sample(n=1)).join("\t") + "\n"
+        if isinstance(self.test_data, dataset):
+            ret += vector("\ttest:", len(self.test_data), self.raw_test.sample(n=1)).join("\t") + "\n"
+        else:
+            ret += "\ttest:\n"
+            for name, td in self.raw_test.items():
+                ret += "\t" + vector(name, td.length, td.sample(n=1)).join("\t") + "\n"
+        return ret
+
+    def __repr__(self):
+        return str(self)
