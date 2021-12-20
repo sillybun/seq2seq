@@ -16,6 +16,7 @@ def main(parser, **kwargs):
             "timer_disable": True,
             "l2_reg": 0.01,
             "learning_rate": 1e-3,
+            "lr_final_decay": 1e-2,
             # "datapath": "dataset/dataset_train_rank2.db",
             # "embedding": "dataset/embedding_inputdim_6_embeddingdim_4096_round_without_normalize.db",
             # "datapath": "dataset/dataset_item_2_train_rank2.db",
@@ -53,6 +54,9 @@ def main(parser, **kwargs):
             train_loss.append(loss)
             train_acc.append(acc)
             return_info_collector.merge(return_info, lambda x, y: (x[0] + y, x[1] + 1), default=(0, 0))
+
+        if t.lr_schedular is not None:
+            t.lr_schedular.step()
 
         return_info_collector = return_info_collector.map(value=lambda x: x[0] / x[1])
 
@@ -177,6 +181,7 @@ if __name__ == "__main__":
     parser.add_argument("--order_one_init", dest="order_one_init", action="store_true")
     parser.add_argument("--residual_loss", default=0, type=float)
     parser.add_argument("--train_items_crop", default=-1, type=int)
+    parser.add_argument("--lr_final_decay", default=1.0, type=float)
     hyper, unknown = parser.parse_known_args()
     print("unknown", unknown)
     hyper = table(hyper)

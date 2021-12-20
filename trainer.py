@@ -9,7 +9,7 @@ from zytlib.table import table
 from zytlib import path
 from zytlib.wrapper import registered_property
 from torchfunction.device import get_device
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from zytlib.wrapper import FunctionTimer
 
 class Trainer:
@@ -41,6 +41,8 @@ class Trainer:
                 "residual_loss": 0,
                 "load_model_path": None,
                 "train_items_crop": -1,
+                "lr_final_decay": 1.0,
+                "max_epochs": 500,
                 })
         self.hyper.update_exist(kwargs)
         if self.hyper.key_not_here(kwargs):
@@ -150,6 +152,13 @@ class Trainer:
     def optimizer(self):
         return torch.optim.Adam([{"params": self.encoder.parameters()}, {"params": self.decoder.parameters()}], lr=self.hyper["learning_rate"])
 
+    @registered_property
+    def lr_schedular(self) -> Optional[torch.optim.lr_scheduler._LRScheduler]:
+        if self.hyper.max_epochs > 0 and self.hyper.lr_final_decay != 1.0:
+            return torch.optim.lr_scheduler.ExponentialLR(self.optimizer, self.hyper.lr_final_decay ** (1 / self.hyper.max_epochs))
+        else:
+            return None
+
     def save(self, filepath: path) -> None:
         filepath = path(filepath)
         filepath.parent.mkdir()
@@ -251,3 +260,4 @@ class Trainer:
     def adjust_lr(self, lr_mul=1.0):
         for param in self.optimizer.param_groups:
             param["lr"] = param["lr"] * lr_mul
+
