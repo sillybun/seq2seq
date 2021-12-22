@@ -153,9 +153,9 @@ class Trainer:
         return torch.optim.Adam([{"params": self.encoder.parameters()}, {"params": self.decoder.parameters()}], lr=self.hyper["learning_rate"])
 
     @registered_property
-    def lr_schedular(self) -> Optional[torch.optim.lr_scheduler._LRScheduler]:
+    def lr_schedular(self) -> torch.optim.lr_scheduler._LRScheduler:
         if self.hyper.max_epochs > 0 and self.hyper.lr_final_decay != 1.0:
-            return torch.optim.lr_scheduler.ExponentialLR(self.optimizer, self.hyper.lr_final_decay ** (1 / self.hyper.max_epochs))
+            return torch.optim.lr_scheduler.ExponentialLR(self.optimizer, self.hyper.lr_final_decay ** (1 / self.hyper.max_epochs), verbose=True)
         else:
             return None
 
