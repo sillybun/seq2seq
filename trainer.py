@@ -175,6 +175,7 @@ class Trainer:
         hyper = table(saved["hyper"])
         hyper["embedding"] = saved["embedding"]
         hyper.update(kwargs)
+        hyper.load_model_path = None
         ret = Trainer(**hyper)
         ret.encoder.load_state_dict(saved["encoder state"])
         ret.decoder.load_state_dict(saved["decoder state"])
