@@ -31,6 +31,8 @@ def low_rank(self, n, r, name="J", order_one_init=False):
         else:
             return torch.matmul(torch.matmul(x, getattr(self, f"_{name}_U")), getattr(self, f"_{name}_V").T)
     def load_state_dict(state: table):
+        if len(state) == 0:
+            return
         max_rank = r
         if isinstance(state, nn.Module):
             state = state.state_dict()
@@ -108,6 +110,8 @@ class encoder_rnn(nn.Module):
         return table({"lambda[{}]".format(index + 1): S[index].item() for index in range(rank)})
 
     def load_state_dict(self, encoder_state: OrderedDict):
+        if len(encoder_state) == 0:
+            return
         self.load_states.apply(lambda x: x(encoder_state))
 
     @registered_property
@@ -163,6 +167,8 @@ class linear_decoder_rnn(nn.Module):
         return table({"lambda[{}]".format(index + 1): S[index].item() for index in range(rank)})
 
     def load_state_dict(self, decoder_state: OrderedDict) -> None:
+        if len(decoder_state) == 0:
+            return
         self.load_states.apply(lambda x: x(decoder_state))
 
 # class decoder_rnn(nn.Module):
@@ -287,12 +293,17 @@ class encoder(nn.Module):
         return ret.map(key=lambda x: "encoder." + x)
 
     def load_state_dict(self, encoder_state):
+        if encoder_state is None:
+            return
+        if isinstance(encoder_state, dict) and len(encoder_state) == 0:
+            return
         if isinstance(encoder_state, nn.Module):
             encoder_state = encoder_state.state_dict()
         encoder_state = table.hieratical(encoder_state)
         if "embedding" in encoder_state and isinstance(self.embedding, nn.Parameter):
             self.embedding.data.copy_(encoder_state["embedding"])
-        self.rnn.load_state_dict(encoder_state.rnn)
+        if "rnn" in encoder_state:
+            self.rnn.load_state_dict(encoder_state.rnn)
 
 class decoder(nn.Module):
 
@@ -438,10 +449,16 @@ class decoder(nn.Module):
         return ret.map(key=lambda x: "decoder." + x)
 
     def load_state_dict(self, decoder_state):
+        if decoder_state is None:
+            return
+        if isinstance(decoder_state, dict) and len(decoder_state) == 0:
+            return
         if isinstance(decoder_state, nn.Module):
             decoder_state = decoder_state.state_dict()
         decoder_state = table.hieratical(decoder_state)
         if "input_to_decoder" in decoder_state:
             self.input_to_decoder.data.copy_(decoder_state.input_to_decoder)
-        self.linear_layer.data.copy_(decoder_state.linear_layer)
-        self.rnn_cell.load_state_dict(decoder_state.rnn_cell)
+        if "linear_layer" in decoder_state:
+            self.linear_layer.data.copy_(decoder_state.linear_layer)
+        if "rnn_cell" in decoder_state:
+            self.rnn_cell.load_state_dict(decoder_state.rnn_cell)

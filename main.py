@@ -174,6 +174,8 @@ if __name__ == "__main__":
     parser.add_argument("--decoder_max_rank", default=-1, type=int)
     parser.add_argument("--model_name", default="", type=str)
     parser.add_argument("--load_model_path", default="", type=str)
+    parser.add_argument("--no_load_encoder", dest="load_encoder", action="store_false")
+    parser.add_argument("--no_load_decoder", dest="load_decoder", action="store_false")
     parser.add_argument("--freeze_parameter", nargs="+")
     parser.add_argument("--save_model_every_epoch_num", default=100, type=int)
     parser.add_argument("--timer_enable", dest="timer_disable", action="store_false")

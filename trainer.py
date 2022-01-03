@@ -40,6 +40,8 @@ class Trainer:
                 "order_one_init": False,
                 "residual_loss": 0,
                 "load_model_path": None,
+                "load_encoder": True,
+                "load_decoder": True,
                 "train_items_crop": -1,
                 "lr_final_decay": 1.0,
                 "max_epochs": 500,
@@ -89,7 +91,7 @@ class Trainer:
         self.dataset = SimulatedDataset(self.hyper["datapath"], self.hyper["input_dim"], self.hyper["batch_size"], train_items_crop=self.hyper.train_items_crop)
 
         if self.hyper.load_model_path:
-            self.load_state_dict(self.hyper.load_model_path)
+            self.load_state_dict(self.hyper.load_model_path, self.hyper.load_encoder, self.hyper.load_decoder)
 
     def train_step(self, batch, epoch=-1, index=-1):
         return_info = table()
@@ -189,8 +191,17 @@ class Trainer:
             saved = torch.load(filepath, map_location=self.device)
             encoder_loaded = saved["encoder state"]
             decoder_loaded = saved["decoder state"]
-        if encoder_state is not None:
+        if encoder_state is True:
+            pass
+        elif encoder_state is False:
+            encoder_loaded = table()
+        elif encoder_state is not None:
             encoder_loaded = {name: param for name, param in encoder_loaded.items() if name in encoder_state}
+        if decoder_state is True:
+            pass
+        elif encoder_state is False:
+            decoder_loaded = table()
+        elif decoder_state is not None:
             decoder_loaded = {name: param for name, param in decoder_loaded.items() if name in decoder_loaded}
 
         self.encoder.load_state_dict(encoder_loaded)
@@ -262,3 +273,10 @@ class Trainer:
         for param in self.optimizer.param_groups:
             param["lr"] = param["lr"] * lr_mul
 
+    def copy(self) -> "Trainer":
+        hyper = self.hyper.copy()
+        hyper.load_model_path = None
+        ret = Trainer(**hyper)
+        ret.encoder.load_state_dict(self.encoder.state_dict())
+        ret.decoder.load_state_dict(self.decoder.state_dict())
+        return ret
