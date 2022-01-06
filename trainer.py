@@ -38,6 +38,7 @@ class Trainer:
                 "timer_disable": True,
                 "clip_grad": 0.1,
                 "order_one_init": False,
+                "zero_init": False,
                 "residual_loss": 0,
                 "load_model_path": None,
                 "load_encoder": True,
@@ -69,6 +70,7 @@ class Trainer:
                  encoder_max_rank = self.hyper["encoder_max_rank"],
                  timer = self.timer.timer,
                  order_one_init = self.hyper.order_one_init,
+                 zero_init=self.hyper.zero_init,
                  ).to(self.device)
         self.encoder.embedding = self.encoder.embedding.to(self.device)
         self.decoder = decoder(self.hyper["decoder_dim"],
@@ -82,6 +84,7 @@ class Trainer:
                  decoder_max_rank = self.hyper["decoder_max_rank"],
                  timer = self.timer.timer,
                  order_one_init = self.hyper.order_one_init,
+                 zero_init=self.hyper.zero_init,
                  ).to(self.device)
 
         for name, param in self.named_parameters():

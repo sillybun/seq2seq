@@ -17,6 +17,7 @@ def main(parser, **kwargs):
             "l2_reg": 0.01,
             "learning_rate": 1e-3,
             "lr_final_decay": 1e-2,
+            "zero_init": True,
             # "datapath": "dataset/dataset_train_rank2.db",
             # "embedding": "dataset/embedding_inputdim_6_embeddingdim_4096_round_without_normalize.db",
             # "datapath": "dataset/dataset_item_2_train_rank2.db",
@@ -36,6 +37,7 @@ def main(parser, **kwargs):
     logger.log_parser(parser)
     logger.info(t.hyper, sep="\n")
     logger.info(t.named_parameters().map(lambda name, x: (name, x.shape, x.requires_grad)), sep="\n")
+    logger.info(t.named_parameters(), sep="\n")
 
     if hyper["model_name"]:
         saved_path = path("model") / path(hyper["model_name"]).with_ext("pt")
@@ -181,6 +183,7 @@ if __name__ == "__main__":
     parser.add_argument("--timer_enable", dest="timer_disable", action="store_false")
     parser.add_argument("--clip_grad", default=0.1, type=float)
     parser.add_argument("--order_one_init", dest="order_one_init", action="store_true")
+    parser.add_argument("--zero_init", action="store_true")
     parser.add_argument("--residual_loss", default=0, type=float)
     parser.add_argument("--train_items_crop", default=-1, type=int)
     parser.add_argument("--lr_final_decay", default=1.0, type=float)

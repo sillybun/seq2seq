@@ -10,16 +10,22 @@ from torchfunction.select import select_index_by_batch
 from zytlib.table import table
 import math
 
-def low_rank(self, n, r, name="J", order_one_init=False):
+def low_rank(self, n, r, name="J", order_one_init=False, zero_init=False):
     self.__setattr__("_" + name + "_r", r)
     if r == -1:
         if order_one_init:
             self.__setattr__("_" + name, nn.Parameter(torch.randn(n, n)))
+        elif zero_init:
+            self.__setattr__("_" + name, nn.Parameter(torch.zeros(n, n)))
         else:
             self.__setattr__("_" + name, nn.Parameter(torch.randn(n, n) * math.sqrt(n)))
     else:
-        self.__setattr__("_" + name + "_V", nn.Parameter(torch.randn(n, r)))
-        self.__setattr__("_" + name + "_U", nn.Parameter(torch.randn(n, r)))
+        if zero_init:
+            self.__setattr__("_" + name + "_V", nn.Parameter(torch.zeros(n, r)))
+            self.__setattr__("_" + name + "_U", nn.Parameter(torch.zeros(n, r)))
+        else:
+            self.__setattr__("_" + name + "_V", nn.Parameter(torch.randn(n, r)))
+            self.__setattr__("_" + name + "_U", nn.Parameter(torch.randn(n, r)))
     def func(self):
         if getattr(self, f"_{name}_r") == -1:
             return getattr(self, f"_{name}")
@@ -59,14 +65,14 @@ def low_rank(self, n, r, name="J", order_one_init=False):
 
 class encoder_rnn(nn.Module):
 
-    def __init__(self, tau, delta_t, embedding_dim, noise_sigma, gain=1.0, p=1.0, encoder_bias=False, encoder_max_rank=-1, order_one_init=False):
+    def __init__(self, tau, delta_t, embedding_dim, noise_sigma, gain=1.0, p=1.0, encoder_bias=False, encoder_max_rank=-1, order_one_init=False, zero_init=False):
         super().__init__()
         save_args(vars())
         self.init()
 
     def init(self):
         self.load_states = vector()
-        lsd = low_rank(self, self.hyper.embedding_dim, self.hyper.encoder_max_rank, name="J", order_one_init=self.hyper.order_one_init)
+        lsd = low_rank(self, self.hyper.embedding_dim, self.hyper.encoder_max_rank, name="J", order_one_init=self.hyper.order_one_init, zero_init=self.hyper.zero_init)
         self.load_states.append(lsd)
         if self.hyper.encoder_max_rank == -1:
             self._J.gain = self.gain
@@ -123,7 +129,7 @@ class encoder_rnn(nn.Module):
 
 class linear_decoder_rnn(nn.Module):
 
-    def __init__(self, decoder_dim, decoder_bias=False, decoder_max_rank=-1, order_one_init=False):
+    def __init__(self, decoder_dim, decoder_bias=False, decoder_max_rank=-1, order_one_init=False, zero_init=False):
 
         super().__init__()
         save_args(vars())
@@ -131,7 +137,7 @@ class linear_decoder_rnn(nn.Module):
 
     def init(self):
         self.load_states = vector()
-        lsd = low_rank(self, self.hyper.decoder_dim, self.hyper.decoder_max_rank, name="W", order_one_init=self.hyper.order_one_init)
+        lsd = low_rank(self, self.hyper.decoder_dim, self.hyper.decoder_max_rank, name="W", order_one_init=self.hyper.order_one_init, zero_init=self.hyper.zero_init)
         self.load_states.append(lsd)
         if self.hyper["decoder_max_rank"] == -1:
             self._W.gain = self.gain
@@ -231,12 +237,12 @@ class linear_decoder_rnn(nn.Module):
 
 class encoder(nn.Module):
 
-    def __init__(self, tau, delta_t, embedding_dim, noise_sigma, input_dim, input_gain=1.0, embedding=None, is_embedding_fixed=True, encoder_bias=False, encoder_max_rank=-1, timer=None, order_one_init=False):
+    def __init__(self, tau, delta_t, embedding_dim, noise_sigma, input_dim, input_gain=1.0, embedding=None, is_embedding_fixed=True, encoder_bias=False, encoder_max_rank=-1, timer=None, order_one_init=False, zero_init=False):
 
         super().__init__()
         save_args(vars(), ignore=("timer",))
 
-        self.rnn = encoder_rnn(tau, delta_t, embedding_dim, noise_sigma, encoder_bias=encoder_bias, encoder_max_rank=encoder_max_rank, order_one_init=order_one_init)
+        self.rnn = encoder_rnn(tau, delta_t, embedding_dim, noise_sigma, encoder_bias=encoder_bias, encoder_max_rank=encoder_max_rank, order_one_init=order_one_init, zero_init=zero_init)
         if embedding is None:
             embedding = torch.randn(input_dim, embedding_dim)
         else:
@@ -307,14 +313,14 @@ class encoder(nn.Module):
 
 class decoder(nn.Module):
 
-    def __init__(self, decoder_dim, encoder_dim, input_dim, output_dim, input_embedding, linear_decoder=True, decoder_bias=None, encoder_to_decoder_equal_space=False, decoder_max_rank=-1, timer=None, order_one_init=False):
+    def __init__(self, decoder_dim, encoder_dim, input_dim, output_dim, input_embedding, linear_decoder=True, decoder_bias=None, encoder_to_decoder_equal_space=False, decoder_max_rank=-1, timer=None, order_one_init=False, zero_init=False):
 
         super().__init__()
         save_args(vars(), ignore=("timer",))
         if linear_decoder:
             if decoder_bias is None:
                 decoder_bias = False
-            self.rnn_cell = linear_decoder_rnn(decoder_dim, decoder_bias=decoder_bias, decoder_max_rank=decoder_max_rank, order_one_init=order_one_init)
+            self.rnn_cell = linear_decoder_rnn(decoder_dim, decoder_bias=decoder_bias, decoder_max_rank=decoder_max_rank, order_one_init=order_one_init, zero_init=zero_init)
         else:
             raise NotImplementedError()
 
@@ -329,12 +335,16 @@ class decoder(nn.Module):
 
     def init(self) -> None:
         nn.init.normal_(self.linear_layer)
-        if not self.hyper.order_one_init:
+        if self.hyper.zero_init:
+            nn.init.zeros_(self.linear_layer)
+        elif not self.hyper.order_one_init:
             self.linear_layer.data.mul_(math.sqrt(self.hyper.decoder_dim))
         self.linear_layer.gain = 1 / self.hyper.decoder_dim
         if not self.hyper["encoder_to_decoder_equal_space"]:
             nn.init.normal_(self.input_to_decoder)
-            if not self.hyper.order_one_init:
+            if self.hyper.zero_init:
+                nn.init.zeros_(self.input_to_decoder)
+            elif not self.hyper.order_one_init:
                 self.input_to_decoder.data.mul_(math.sqrt(self.hyper.encoder_dim))
             self.input_to_decoder.gain = 1 / self.hyper.encoder_dim
 
