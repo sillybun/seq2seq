@@ -8,6 +8,7 @@ import argparse
 import sys
 from torchfunction.inspect import get_shape
 import torch
+import numpy as np
 
 def main(parser, **kwargs):
 
@@ -18,6 +19,7 @@ def main(parser, **kwargs):
             "learning_rate": 1e-3,
             "lr_final_decay": 1e-2,
             "zero_init": True,
+            "decoder_max_rank": 2,
             # "datapath": "dataset/dataset_train_rank2.db",
             # "embedding": "dataset/embedding_inputdim_6_embeddingdim_4096_round_without_normalize.db",
             # "datapath": "dataset/dataset_item_2_train_rank2.db",
@@ -74,7 +76,7 @@ def main(parser, **kwargs):
                     ta.append(acc)
 
                 test_loss[name] = tl
-                test_acc[name] = ta
+                test_acc[name] = np.stack(ta).mean(0)
 
             logger.info(f"[{epoch}]/[{hyper['max_epochs']}], train_loss: {train_loss.mean()}, train_acc: {train_acc.mean()}, test_loss: {test_loss.map(value=lambda x: x.mean())}, test_acc: {test_acc.map(value=lambda x: x.mean())}")
             logger.variable("train_loss", train_loss.mean())
@@ -85,7 +87,9 @@ def main(parser, **kwargs):
             for name, tl in test_loss.items():
                 logger.variable("test_loss[{}]".format(name), tl.mean())
             for name, tc in test_acc.items():
-                logger.variable("test_acc[{}]".format(name), tc.mean())
+                # logger.variable("test_acc[{}]".format(name), tc.mean())
+                for l in range(len(tc)):
+                    logger.variable("test_acc[{}l{}]".format(name, l+1), tc[l])
 
         else:
             test_loss, test_acc = vector(), vector()
@@ -161,7 +165,14 @@ if __name__ == "__main__":
     parser.add_argument("--embedding_trainable", dest="is_embedding_fixed", action="store_false")
     parser.add_argument("--delta_t", default=20, type=int)
     parser.add_argument("--tau", default=100, type=float)
-    parser.add_argument("--embedding_size", default=1024, type=int)
+    parser.add_argument("--subp_encoder", action="store_true")
+    parser.add_argument("--encoder_subp_num", default=-1, type=int)
+    parser.add_argument("--encoder_subp_sigma2", default=1.0, type=float)
+    parser.add_argument("--encoder_subp_covar", default=0.0, type=float)
+    parser.add_argument("--encoder_subp_mean", default=0.0, type=float)
+    parser.add_argument("--encoder_subp_readout_rank", default=-1, type=int)
+    parser.add_argument("--kl_divergence_reg", default=0.001, type=float)
+    parser.add_argument("--encoder_dim", default=-1, type=int)
     parser.add_argument("--decoder_dim", default=512, type=int)
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--noise_sigma", default=0.05, type=float)

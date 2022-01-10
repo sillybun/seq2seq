@@ -178,7 +178,7 @@ class SimulateEmbedding:
         self.hyper.update_exist(kwargs)
 
     def simulate(self):
-        assert self.hyper["method"] in ["randn", "round"]
+        assert self.hyper["method"] in ["randn", "round", "natural"]
         if self.hyper["method"] == "randn":
             embedding = torch.randn(self.hyper["input_dim"], self.hyper["embedding_dim"])
         elif self.hyper["method"] == "round":
@@ -193,6 +193,16 @@ class SimulateEmbedding:
             if self.hyper["normalized"]:
                 pc[:, 1] = pc[:, 1] / torch.norm(pc[:, 1], p=2)
             embedding = torch.matmul(pc, p).T
+        elif self.hyper["method"] == "natural":
+            assert self.hyper.embedding_dim in [1, 2]
+            if self.hyper.embedding_dim == 1:
+                assert self.hyper["input_dim"] == 2
+                embedding = torch.tensor([[1.0], [-1.0]])
+            else:
+                theta = torch.linspace(0, 2 * math.pi, steps=self.hyper["input_dim"] + 1)[:-1]
+                x = torch.cos(theta)
+                y = torch.sin(theta)
+                embedding = torch.stack([x, y]).T
         embedding = embedding * self.hyper["gain_factor"]
         embedding = embedding + torch.randn_like(embedding) * self.hyper["noise"]
         self.embedding = embedding
@@ -228,6 +238,14 @@ def generate_embedding():
     se = SimulateEmbedding(embedding_dim=4096, input_dim=2, method="round", normalized=False)
     se.simulate()
     se.save("dataset/embedding_inputdim_2_embeddingdim_4096_round_without_normalize.db")
+
+    se = SimulateEmbedding(embedding_dim=1, input_dim=2, method="natural")
+    se.simulate()
+    se.save("dataset/embedding_inputdim_2_natural.db")
+
+    se = SimulateEmbedding(embedding_dim=2, input_dim=6, method="natural")
+    se.simulate()
+    se.save("dataset/embedding_inputdim_6_natural.db")
 
 class SimulatedDataset:
 

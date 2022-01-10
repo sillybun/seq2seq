@@ -1,7 +1,7 @@
 from pyctlib import vector
 import torch
 import torch.nn as nn
-from model import encoder, decoder
+from model import encoder, decoder, low_rank_subpopulation_encoder
 from dataset import SimulatedDataset, SimulateEmbedding
 from torchfunction.device import todevice
 from zytlib import vector
@@ -19,6 +19,7 @@ class Trainer:
                 "delta_t": 20,
                 "tau": 100,
                 "embedding_dim": 1024,
+                "encoder_dim": -1,
                 "decoder_dim": 512,
                 "noise_sigma": 0.05,
                 "input_dim": 6,
@@ -33,6 +34,13 @@ class Trainer:
                 "decoder_bias": False,
                 "encoder_to_decoder_equal_space": False,
                 "encoder_max_rank": -1,
+                "subp_encoder": False,
+                "encoder_subp_num": -1,
+                "encoder_subp_sigma2": 1.0,
+                "encoder_subp_covar": 0.0,
+                "encoder_subp_mean": 0.0,
+                "encoder_subp_readout_rank": -1,
+                "kl_divergence_reg": 0.001,
                 "decoder_max_rank": -1,
                 "freeze_parameter": [],
                 "timer_disable": True,
@@ -56,25 +64,48 @@ class Trainer:
         self.timer = FunctionTimer(disable=self.hyper.timer_disable)
         if isinstance(self.hyper["embedding"], str):
             se = SimulateEmbedding.load(self.hyper["embedding"])
-            self.hyper.embedding_dim = se.hyper.embedding_dim
+
             self.hyper.input_dim = se.hyper.input_dim
+            self.hyper.embedding_dim = se.hyper.embedding_dim
+            if not self.hyper.subp_encoder:
+                self.hyper.encoder_dim = se.hyper.embedding_dim
             self.hyper["embedding"] = SimulateEmbedding.load(self.hyper["embedding"]).embedding
-        self.encoder = encoder(self.hyper["tau"],
-                 self.hyper["delta_t"],
-                 self.hyper["embedding_dim"],
-                 self.hyper["noise_sigma"],
-                 self.hyper["input_dim"],
-                 embedding = self.hyper["embedding"],
-                 is_embedding_fixed = self.hyper["is_embedding_fixed"],
-                 encoder_bias = self.hyper["encoder_bias"],
-                 encoder_max_rank = self.hyper["encoder_max_rank"],
-                 timer = self.timer.timer,
-                 order_one_init = self.hyper.order_one_init,
-                 zero_init=self.hyper.zero_init,
-                 ).to(self.device)
+        if not self.hyper.subp_encoder:
+            self.encoder = encoder(self.hyper["tau"],
+                     self.hyper["delta_t"],
+                     self.hyper.encoder_dim,
+                     self.hyper["noise_sigma"],
+                     self.hyper["input_dim"],
+                     embedding = self.hyper["embedding"],
+                     is_embedding_fixed = self.hyper["is_embedding_fixed"],
+                     encoder_bias = self.hyper["encoder_bias"],
+                     encoder_max_rank = self.hyper["encoder_max_rank"],
+                     timer = self.timer.timer,
+                     order_one_init = self.hyper.order_one_init,
+                     zero_init=self.hyper.zero_init,
+                     ).to(self.device)
+        else:
+            self.encoder = low_rank_subpopulation_encoder(self.hyper.tau,
+                    self.hyper.delta_t,
+                    self.hyper.encoder_dim,
+                    self.hyper.noise_sigma,
+                    self.hyper.embedding_dim,
+                    self.hyper.encoder_max_rank,
+                    self.hyper.encoder_subp_readout_rank,
+                    self.hyper.encoder_subp_num,
+                    self.hyper.encoder_subp_sigma2,
+                    self.hyper.encoder_subp_covar,
+                    self.hyper.encoder_subp_mean,
+                    embedding = self.hyper.embedding,
+                    ).to(self.device)
         self.encoder.embedding = self.encoder.embedding.to(self.device)
+        if self.hyper.subp_encoder:
+            decoder_input_dim = self.hyper.encoder_subp_readout_rank
+        else:
+            decoder_input_dim = self.hyper.embedding_dim
+
         self.decoder = decoder(self.hyper["decoder_dim"],
-                 self.hyper["embedding_dim"],
+                 decoder_input_dim,
                  self.hyper["input_dim"],
                  self.hyper["input_dim"],
                  self.encoder.embedding,
@@ -85,6 +116,7 @@ class Trainer:
                  timer = self.timer.timer,
                  order_one_init = self.hyper.order_one_init,
                  zero_init=self.hyper.zero_init,
+                 subp_encoder=self.hyper.subp_encoder,
                  ).to(self.device)
 
         for name, param in self.named_parameters():
@@ -122,6 +154,12 @@ class Trainer:
             l2_reg += torch.sum(torch.square(reg_param))
         return_info.l2_reg = self.hyper["l2_reg"] * l2_reg.item()
 
+        if self.hyper.subp_encoder:
+            kl_divergence_loss = self.encoder.LoadingVectors.KL_Divergence()
+            assert kl_divergence_loss >= -1e-10
+            return_info.kl_divergence_loss = kl_divergence_loss.item() * self.hyper.kl_divergence_reg
+            loss = loss + kl_divergence_loss * self.hyper.kl_divergence_reg
+
         loss = loss + self.hyper["l2_reg"] * l2_reg
         accuracy = self.decoder.accuracy(ground_truth_tensor, ground_truth_length, decoded_seq)
         loss.backward()
@@ -142,7 +180,7 @@ class Trainer:
             decoded_seq, hidden_state_seq = self.decoder(final_state, torch.zeros_like(ground_truth_tensor).fill_(-1), ground_truth_length, teaching_forcing_ratio=0.0)
 
             loss = self.decoder.loss(ground_truth_tensor, ground_truth_length, decoded_seq)
-            accuracy = self.decoder.accuracy(ground_truth_tensor, ground_truth_length, decoded_seq)
+            accuracy = self.decoder.accuracy(ground_truth_tensor, ground_truth_length, decoded_seq, by_rank=True)
         return loss.item(), accuracy
 
     @property

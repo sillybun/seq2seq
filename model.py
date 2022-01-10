@@ -63,6 +63,112 @@ def low_rank(self, n, r, name="J", order_one_init=False, zero_init=False):
         setattr(self.__class__, name + "_rmul", rmul)
     return load_state_dict
 
+class low_rank_subpopulation_loading_vector(nn.Module):
+
+    def __init__(self, n, vec_num, sub_num, p=None, init_sigma2=1.0, init_covar=0.0, init_mean=0.0):
+
+        super().__init__()
+        save_args(vars())
+
+        assert init_sigma2 > 0
+        assert abs(init_covar) < init_sigma2
+        init_cov_matrix = torch.zeros(vec_num, vec_num) + init_covar + torch.eye(vec_num, vec_num) * (init_sigma2 - init_covar)
+        L, V = torch.linalg.eigh(init_cov_matrix)
+        P = V @ torch.diag(L ** 0.5)
+
+        self.COV_MATRIX_L = nn.ParameterList([nn.Parameter(P.clone()) for _ in range(sub_num)])
+        self.MEAN_MATRIX = nn.ParameterList([nn.Parameter(torch.zeros(vec_num, 1) + init_mean) for _ in range(sub_num)])
+
+        if p is None:
+            self.P = vector.constant_vector(1/sub_num, sub_num)
+        else:
+            self.P = vector(p)
+
+        self.sample()
+
+    def sample(self):
+
+        self.subp_neuron_num = vector.multinomial(self.hyper.n, self.P)
+        self.random_gaussian = [torch.randn(self.hyper.vec_num, self.subp_neuron_num[index], device=(device:= self.COV_MATRIX_L[index].device)) for index in range(self.hyper.sub_num)]
+        self.perm_matrix = torch.randperm(self.hyper.n, device=device)
+        self.lv_index = vector.range(self.hyper.sub_num).map(lambda index: vector.constant_vector(index, self.subp_neuron_num[index])).flatten()
+        self.lv_index = self.lv_index[self.perm_matrix.detach().cpu().numpy().tolist()]
+        self.__SubpIndex = table(index=self.lv_index)
+        for p_i in range(self.hyper.sub_num):
+            self.__SubpIndex[p_i] = self.lv_index.findall(p_i)
+
+    def clear_sample(self):
+        delattr(self, "random_gaussian")
+        delattr(self, "perm_matrix")
+        delattr(self, "subp_neuron_num")
+        delattr(self, "__SubpIndex")
+
+    def LoadingVectors(self):
+        lv = [(self.COV_MATRIX_L[index] @ self.random_gaussian[index] + self.MEAN_MATRIX[index]).T for index in range(self.hyper.sub_num)]
+        lv = torch.cat(lv, 0)
+        lv = lv[self.perm_matrix, :]
+        self.loadingvectors = lv
+        return self.loadingvectors
+
+    def SubpIndex(self, *args):
+        if len(args) == 0:
+            return self.__SubpIndex.index
+        if len(args) == 1:
+            return self.__SubpIndex[int(args[0])]
+
+    def KL_Divergence(self):
+        ret = 0
+        for index in range(self.hyper.sub_num):
+            cov_m_l = self.COV_MATRIX_L[index]
+            mean_m = self.MEAN_MATRIX[index]
+            cov_m = torch.matmul(cov_m_l, cov_m_l.T)
+            ret += 1 / 2 * (-torch.log(torch.det(cov_m)) - self.hyper.vec_num + torch.trace(cov_m) + torch.sum(torch.square(mean_m)))
+        return ret
+
+    def inspect(self):
+        ret = table()
+        for index in range(self.hyper.sub_num):
+            cov_m_l = self.COV_MATRIX_L[index]
+            cov_m = torch.matmul(cov_m_l, cov_m_l.T)
+            for i in range(self.hyper.vec_num):
+                ret[f"ssigma2[{index},{i}]"] = cov_m[i, i].item()
+            for i in range(self.hyper.vec_num):
+                for j in range(i + 1, self.hyper.vec_num):
+                    ret[f"scov[{index},{i},{j}]"] = cov_m[i, j].item()
+        return ret
+
+class empty_encoder_rnn(nn.Module):
+
+    def __init__(self, tau, delta_t, embedding_dim, noise_sigma):
+        super().__init__()
+        save_args(vars())
+        self.alpha = self.hyper["delta_t"] / self.hyper["tau"]
+
+    def forward(self, x: torch.Tensor, I: torch.Tensor, U, V, noise_sigma=None) -> torch.Tensor:
+        if noise_sigma is not None:
+            noise = torch.randn_like(I) * noise_sigma
+        elif self.training:
+            noise = torch.randn_like(I) * self.hyper["noise_sigma"]
+        else:
+            noise = torch.zeros_like(I)
+
+        x = (1 - self.alpha) * x + self.alpha * (torch.matmul(torch.matmul(torch.tanh(x), V), U.T) / self.hyper.embedding_dim + I + noise)
+        # x = (1 - self.alpha) * x + self.alpha * (self.J_rmul(torch.tanh(x)) * self.gain + I + noise)
+        return x
+
+    @property
+    def regulization_parameters(self) -> table:
+        return table()
+
+    def inspect(self) -> table:
+        return table()
+
+    def load_state_dict(self, encoder_state: OrderedDict):
+        return
+
+    def __repr__(self) -> str:
+        return f"empty_encoder_rnn(n={self.hyper.embedding_dim})"
+
 class encoder_rnn(nn.Module):
 
     def __init__(self, tau, delta_t, embedding_dim, noise_sigma, gain=1.0, p=1.0, encoder_bias=False, encoder_max_rank=-1, order_one_init=False, zero_init=False):
@@ -96,7 +202,6 @@ class encoder_rnn(nn.Module):
         if self.hyper['encoder_bias']:
             I = I + self.bias
 
-        # x = (1 - self.alpha) * x + self.alpha * (torch.matmul(torch.tanh(x), self.J * self.gain) + I + noise)
         x = (1 - self.alpha) * x + self.alpha * (self.J_rmul(torch.tanh(x)) * self.gain + I + noise)
         return x
 
@@ -235,6 +340,89 @@ class linear_decoder_rnn(nn.Module):
 #             self._V.data.copy_(V @ torch.diag(S))
 #             self._U.data.copy_(U)
 
+class low_rank_subpopulation_encoder(nn.Module):
+
+    def __init__(self, tau, delta_t, embedding_dim, noise_sigma, input_dim, encoder_rank, readout_rank, encoder_subp_num, init_sigma2=1.0, init_covar=0.0, init_mean=0.0, input_gain=1.0, embedding=None):
+        super().__init__()
+        save_args(vars())
+
+        self.hyper.vec_num = input_dim + 2 * encoder_rank + readout_rank
+        self.LoadingVectors = low_rank_subpopulation_loading_vector(embedding_dim, self.hyper.vec_num, encoder_subp_num, p=None, init_mean=init_mean, init_covar=init_covar, init_sigma2=init_sigma2)
+        self.rnn = empty_encoder_rnn(tau, delta_t, embedding_dim, noise_sigma)
+
+        if embedding is not None:
+            self.embedding = embedding
+
+    def forward(self, u, length, noise_sigma=None, only_final_state=False, resample_loadingvectors=True):
+        """
+        u.shape: [batch, time, input_dim]
+        length.shape: [batch]
+
+        output:
+        ret.shape: [batch, time(+1), embedding_dim]
+        """
+        if resample_loadingvectors:
+            self.LoadingVectors.sample()
+
+        loading_vec = self.LoadingVectors.LoadingVectors()
+        p = 0
+        embedding = loading_vec[:, :(p:=p + self.hyper.input_dim)]
+        U = loading_vec[:, p:(p:=p + self.hyper.encoder_rank)]
+        V = loading_vec[:, p:(p:=p + self.hyper.encoder_rank)]
+        W = loading_vec[:, p:(p:=p+self.hyper.readout_rank)]
+        assert p == loading_vec.shape[1]
+
+        batch_size = u.shape[0]
+
+        sorted_length, length_index = torch.sort(length, dim=-1, descending=True)
+        u = u[length_index, :, :]
+
+        x = torch.zeros(sorted_length[0].item() + 1, batch_size, self.hyper['embedding_dim'], device=u.device)
+
+
+        for index in range(sorted_length[0].item()):
+
+            batch = sum(sorted_length > index).item()
+            if batch == 0:
+                break
+            x[index + 1, :batch, :] = self.rnn(x[index, :batch, :], torch.matmul(u[:batch, index, :] @ self.embedding, embedding.T) * self.hyper.input_gain, U, V, noise_sigma=noise_sigma)
+
+        x = x.transpose(0, 1)
+
+        ret = torch.zeros_like(x)
+        ret[length_index, :, :] = x
+
+        final_state = torch.matmul(torch.tanh(torch.gather(ret, 1, length.view(batch_size, 1, 1).expand(batch_size, 1, self.hyper['embedding_dim'])).squeeze(1)), W) / self.hyper.embedding_dim
+
+        if only_final_state:
+            return final_state
+        else:
+            return ret, final_state
+
+    @property
+    def regulization_parameters(self) -> table:
+        return table()
+
+    def KL_Divergence(self):
+        return self.LoadingVectors().KL_Divergence()
+
+    def inspect(self) -> table:
+        ret = self.LoadingVectors.inspect()
+        return ret.map(key=lambda x: "encoder." + x)
+
+    # def load_state_dict(self, encoder_state):
+    #     if encoder_state is None:
+    #         return
+    #     if isinstance(encoder_state, dict) and len(encoder_state) == 0:
+    #         return
+    #     if isinstance(encoder_state, nn.Module):
+    #         encoder_state = encoder_state.state_dict()
+    #     encoder_state = table.hieratical(encoder_state)
+    #     if "embedding" in encoder_state and isinstance(self.embedding, nn.Parameter):
+    #         self.embedding.data.copy_(encoder_state["embedding"])
+    #     if "rnn" in encoder_state:
+    #         self.rnn.load_state_dict(encoder_state.rnn)
+
 class encoder(nn.Module):
 
     def __init__(self, tau, delta_t, embedding_dim, noise_sigma, input_dim, input_gain=1.0, embedding=None, is_embedding_fixed=True, encoder_bias=False, encoder_max_rank=-1, timer=None, order_one_init=False, zero_init=False):
@@ -313,7 +501,7 @@ class encoder(nn.Module):
 
 class decoder(nn.Module):
 
-    def __init__(self, decoder_dim, encoder_dim, input_dim, output_dim, input_embedding, linear_decoder=True, decoder_bias=None, encoder_to_decoder_equal_space=False, decoder_max_rank=-1, timer=None, order_one_init=False, zero_init=False):
+    def __init__(self, decoder_dim, encoder_dim, input_dim, output_dim, input_embedding, linear_decoder=True, decoder_bias=None, encoder_to_decoder_equal_space=False, decoder_max_rank=-1, timer=None, order_one_init=False, zero_init=False, subp_encoder=False, perfect_decoder=False):
 
         super().__init__()
         save_args(vars(), ignore=("timer",))
@@ -334,19 +522,23 @@ class decoder(nn.Module):
             self.forward = timer(self.forward)
 
     def init(self) -> None:
-        nn.init.normal_(self.linear_layer)
-        if self.hyper.zero_init:
-            nn.init.zeros_(self.linear_layer)
-        elif not self.hyper.order_one_init:
-            self.linear_layer.data.mul_(math.sqrt(self.hyper.decoder_dim))
-        self.linear_layer.gain = 1 / self.hyper.decoder_dim
-        if not self.hyper["encoder_to_decoder_equal_space"]:
-            nn.init.normal_(self.input_to_decoder)
+        with torch.no_grad():
+            nn.init.normal_(self.linear_layer)
             if self.hyper.zero_init:
-                nn.init.zeros_(self.input_to_decoder)
+                nn.init.zeros_(self.linear_layer)
             elif not self.hyper.order_one_init:
-                self.input_to_decoder.data.mul_(math.sqrt(self.hyper.encoder_dim))
-            self.input_to_decoder.gain = 1 / self.hyper.encoder_dim
+                self.linear_layer.data.mul_(math.sqrt(self.hyper.decoder_dim))
+            self.linear_layer.gain = 1 / self.hyper.decoder_dim
+            if self.hyper.subp_encoder:
+                nn.init.normal_(self.input_to_decoder)
+                self.input_to_decoder.gain = 1.0
+            elif not self.hyper["encoder_to_decoder_equal_space"]:
+                nn.init.normal_(self.input_to_decoder)
+                if self.hyper.zero_init:
+                    nn.init.zeros_(self.input_to_decoder)
+                elif not self.hyper.order_one_init:
+                    self.input_to_decoder.data.mul_(math.sqrt(self.hyper.encoder_dim))
+                self.input_to_decoder.gain = 1 / self.hyper.encoder_dim
 
     def readout(self, hidden_state):
         return hidden_state @ self.linear_layer * self.linear_layer.gain
@@ -365,7 +557,9 @@ class decoder(nn.Module):
 
         ground_truth_length, sorted_index = ground_truth_length.sort(dim=-1, descending=True)
         ground_truth_tensor = ground_truth_tensor[sorted_index, :]
-        if self.hyper["encoder_to_decoder_equal_space"]:
+        if self.hyper.subp_encoder:
+            hidden_state = hidden_state[sorted_index, :] @ self.input_to_decoder
+        elif self.hyper["encoder_to_decoder_equal_space"]:
             hidden_state = torch.tanh(hidden_state[sorted_index, :])
         else:
             hidden_state = torch.tanh(hidden_state[sorted_index, :]) @ self.input_to_decoder * self.input_to_decoder.gain
@@ -423,7 +617,7 @@ class decoder(nn.Module):
         projection = self.readout(self.rnn_cell(last_decoded, None))
         return torch.sum(torch.square(projection), dim=1).mean(), projection
 
-    def accuracy(self, ground_truth: torch.Tensor, ground_truth_length: torch.Tensor, prediction: torch.Tensor) -> float:
+    def accuracy(self, ground_truth: torch.Tensor, ground_truth_length: torch.Tensor, prediction: torch.Tensor, by_rank=False) -> float:
         """
         input:
             ground_truth: [batch, max_length]
@@ -431,15 +625,22 @@ class decoder(nn.Module):
             prediction: [batch, max_length, output_dim]
         """
 
-        with torch.no_grad():
-            mask = torch.zeros_like(ground_truth, dtype=torch.bool)
-            for index in range(len(ground_truth_length)):
-                mask[index, :ground_truth_length[index]] = 1
-            prediction_label = prediction.argmax(-1)
-            correct = (prediction_label == ground_truth) * mask
-            correct_num = correct.sum(-1)
-            acc = correct_num / ground_truth_length
-            return acc.mean().item()
+        if not by_rank:
+            with torch.no_grad():
+                mask = torch.zeros_like(ground_truth, dtype=torch.bool)
+                for index in range(len(ground_truth_length)):
+                    mask[index, :ground_truth_length[index]] = 1
+                prediction_label = prediction.argmax(-1)
+                correct = (prediction_label == ground_truth) * mask
+                correct_num = correct.sum(-1)
+                acc = correct_num / ground_truth_length
+                return acc.mean().item()
+        else:
+            with torch.no_grad():
+                gtl = ground_truth_length[0].item()
+                prediction_label = prediction.argmax(-1)
+                correct = (prediction_label == ground_truth)
+                return correct.float().mean(0)[:gtl].detach().cpu().numpy()
 
     @property
     def regulization_parameters(self) -> table:
@@ -453,8 +654,9 @@ class decoder(nn.Module):
     def inspect(self) -> table:
         ret = self.rnn_cell.inspect()
         rank = min(10, self.hyper.encoder_dim, self.hyper.decoder_dim)
-        U, S, V = torch.pca_lowrank(self.input_to_decoder * self.input_to_decoder.gain, q=rank)
-        ret.update(table({"W'.lambda[{}]".format(index + 1): S[index].item() for index in range(rank)}))
+        if not self.hyper.subp_encoder:
+            U, S, V = torch.pca_lowrank(self.input_to_decoder * self.input_to_decoder.gain, q=rank)
+            ret.update(table({"W'.lambda[{}]".format(index + 1): S[index].item() for index in range(rank)}))
         ret += self.regulization_parameters.flatten().map(value=lambda x: torch.sum(torch.square(x)).item())
         return ret.map(key=lambda x: "decoder." + x)
 
