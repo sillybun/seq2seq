@@ -90,7 +90,7 @@ class low_rank_subpopulation_loading_vector(nn.Module):
     def sample(self):
 
         if self.__freeze:
-            if hash(self, "random_gaussian"):
+            if hasattr(self, "random_gaussian"):
                 return
         self.subp_neuron_num = vector.multinomial(self.hyper.n, self.P)
         self.random_gaussian = [torch.randn(self.hyper.vec_num, self.subp_neuron_num[index], device=(device:= self.COV_MATRIX_L[index].device)) for index in range(self.hyper.sub_num)]
@@ -108,6 +108,9 @@ class low_rank_subpopulation_loading_vector(nn.Module):
         delattr(self, "__SubpIndex")
 
     def LoadingVectors(self):
+        self.random_gaussian = [rg.to(self.COV_MATRIX_L[0].device) for rg in self.random_gaussian]
+        self.perm_matrix = self.perm_matrix.to(self.COV_MATRIX_L[0].device)
+
         lv = [(self.COV_MATRIX_L[index] @ self.random_gaussian[index] + self.MEAN_MATRIX[index]).T for index in range(self.hyper.sub_num)]
         lv = torch.cat(lv, 0)
         lv = lv[self.perm_matrix, :]
