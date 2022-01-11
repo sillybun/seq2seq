@@ -161,7 +161,7 @@ def data_collect_fn(batch, istrain):
 class SimulateEmbedding:
 
     @overload
-    def __init__(self, embedding_dim=1024, input_dim=6, method="randn", normalized=False, gain_factor=1, noise=0): ...
+    def __init__(self, embedding_dim=1024, input_dim=6, method="randn", normalized=False, gain_factor=1, noise=0, item_lowrank_dim=2): ...
 
     def __init__(self, **kwargs):
 
@@ -172,6 +172,7 @@ class SimulateEmbedding:
             "normalized": False,
             "gain_factor": 1,
             "noise": 0,
+            "item_lowrank_dim": 2,
             })
 
         self.hyper.lock_key()
@@ -227,23 +228,29 @@ class SimulateEmbedding:
         return str(self)
 
 def generate_embedding():
-    se = SimulateEmbedding(method="round", embedding_dim=1024)
-    se.simulate()
-    se.save("dataset/embedding_inputdim_6_embeddingdim_1024_round.db")
-    se = SimulateEmbedding(embedding_dim=4096, method="round", normalized=False)
-    se.simulate()
-    se.save("dataset/embedding_inputdim_6_embeddingdim_4096_round_without_normalize.db")
+    # se = SimulateEmbedding(method="round", embedding_dim=1024)
+    # se.simulate()
+    # se.save("dataset/embedding_inputdim_6_embeddingdim_1024_round.db")
+    # se = SimulateEmbedding(embedding_dim=4096, method="round", normalized=False)
+    # se.simulate()
+    # se.save("dataset/embedding_inputdim_6_embeddingdim_4096_round_without_normalize.db")
     # se.save("dataset/embedding_inputdim_6_embeddingdim_2048_round_without_normalize.db")
 
-    se = SimulateEmbedding(embedding_dim=4096, input_dim=2, method="round", normalized=False)
-    se.simulate()
-    se.save("dataset/embedding_inputdim_2_embeddingdim_4096_round_without_normalize.db")
+    for embedding_dim in [512, 1024, 2048, 4096]:
+        se = SimulateEmbedding(embedding_dim=embedding_dim, input_dim=6, method="round", normalized=False, item_lowrank_dim=2)
+        se.simulate()
+        se.save(f"dataset/embedding_inputdim_2_embeddingdim_{embedding_dim}_round_without_normalize.db")
 
-    se = SimulateEmbedding(embedding_dim=1, input_dim=2, method="natural")
+    for embedding_dim in [512, 1024, 2048, 4096]:
+        se = SimulateEmbedding(embedding_dim=embedding_dim, input_dim=2, method="round", normalized=False, item_lowrank_dim=1)
+        se.simulate()
+        se.save(f"dataset/embedding_inputdim_2_embeddingdim_{embedding_dim}_round_without_normalize.db")
+
+    se = SimulateEmbedding(embedding_dim=1, input_dim=2, method="natural", item_lowrank_dim=1)
     se.simulate()
     se.save("dataset/embedding_inputdim_2_natural.db")
 
-    se = SimulateEmbedding(embedding_dim=2, input_dim=6, method="natural")
+    se = SimulateEmbedding(embedding_dim=2, input_dim=6, method="natural", item_lowrank_dim=2)
     se.simulate()
     se.save("dataset/embedding_inputdim_6_natural.db")
 

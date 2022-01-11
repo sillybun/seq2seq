@@ -33,15 +33,19 @@ class Trainer:
                 "encoder_bias": False,
                 "decoder_bias": False,
                 "encoder_to_decoder_equal_space": False,
+                "encoder_convert_to_hidden_space": False,
                 "encoder_max_rank": -1,
                 "subp_encoder": False,
+                "naive_loadingvectors": False,
                 "encoder_subp_num": -1,
                 "encoder_subp_sigma2": 1.0,
                 "encoder_subp_covar": 0.0,
                 "encoder_subp_mean": 0.0,
                 "encoder_subp_readout_rank": -1,
                 "kl_divergence_reg": 0.001,
+                "encoder_subp_l1_reg": 1e-5,
                 "decoder_max_rank": -1,
+                "perfect_decoder": False,
                 "freeze_parameter": [],
                 "timer_disable": True,
                 "clip_grad": 0.1,
@@ -54,6 +58,7 @@ class Trainer:
                 "train_items_crop": -1,
                 "lr_final_decay": 1.0,
                 "max_epochs": 500,
+                "item_lowrank_dim": 2,
                 })
         self.hyper.update_exist(kwargs)
         if self.hyper.key_not_here(kwargs):
@@ -70,6 +75,7 @@ class Trainer:
             if not self.hyper.subp_encoder:
                 self.hyper.encoder_dim = se.hyper.embedding_dim
             self.hyper["embedding"] = SimulateEmbedding.load(self.hyper["embedding"]).embedding
+            self.hyper.item_lowrank_dim = se.hyper.item_lowrank_dim
         if not self.hyper.subp_encoder:
             self.encoder = encoder(self.hyper["tau"],
                      self.hyper["delta_t"],
@@ -82,7 +88,9 @@ class Trainer:
                      encoder_max_rank = self.hyper["encoder_max_rank"],
                      timer = self.timer.timer,
                      order_one_init = self.hyper.order_one_init,
-                     zero_init=self.hyper.zero_init,
+                     zero_init = self.hyper.zero_init,
+                     convert_to_hidden_space = self.hyper.encoder_convert_to_hidden_space,
+                     readout_rank = self.hyper.encoder_subp_readout_rank,
                      ).to(self.device)
         else:
             self.encoder = low_rank_subpopulation_encoder(self.hyper.tau,
@@ -97,9 +105,10 @@ class Trainer:
                     self.hyper.encoder_subp_covar,
                     self.hyper.encoder_subp_mean,
                     embedding = self.hyper.embedding,
+                    naive_loadingvectors = self.hyper.naive_loadingvectors,
                     ).to(self.device)
         self.encoder.embedding = self.encoder.embedding.to(self.device)
-        if self.hyper.subp_encoder:
+        if self.hyper.subp_encoder or self.hyper.encoder_convert_to_hidden_space:
             decoder_input_dim = self.hyper.encoder_subp_readout_rank
         else:
             decoder_input_dim = self.hyper.embedding_dim
@@ -107,8 +116,7 @@ class Trainer:
         self.decoder = decoder(self.hyper["decoder_dim"],
                  decoder_input_dim,
                  self.hyper["input_dim"],
-                 self.hyper["input_dim"],
-                 self.encoder.embedding,
+                 item_embedding_dim=self.hyper.item_lowrank_dim,
                  linear_decoder = self.hyper["linear_decoder"],
                  decoder_bias = self.hyper["decoder_bias"],
                  encoder_to_decoder_equal_space = self.hyper["encoder_to_decoder_equal_space"],
@@ -116,7 +124,8 @@ class Trainer:
                  timer = self.timer.timer,
                  order_one_init = self.hyper.order_one_init,
                  zero_init=self.hyper.zero_init,
-                 subp_encoder=self.hyper.subp_encoder,
+                 encoder_convert_to_hidden_space=self.hyper.subp_encoder or self.hyper.encoder_convert_to_hidden_space,
+                 perfect_decoder=self.hyper.perfect_decoder,
                  ).to(self.device)
 
         for name, param in self.named_parameters():
@@ -147,18 +156,26 @@ class Trainer:
         else:
             residual_loss = 0
 
-        l2_reg = 0
+        l2_reg = 0.0
         for reg_param in self.encoder.regulization_parameters.flatten().values():
-            l2_reg += torch.sum(torch.square(reg_param))
+            if reg_param.requires_grad:
+                l2_reg += torch.sum(torch.square(reg_param))
         for reg_param in self.decoder.regulization_parameters.flatten().values():
-            l2_reg += torch.sum(torch.square(reg_param))
-        return_info.l2_reg = self.hyper["l2_reg"] * l2_reg.item()
+            if reg_param.requires_grad:
+                l2_reg += torch.sum(torch.square(reg_param))
+        if not isinstance(l2_reg, float):
+            return_info.l2_reg = self.hyper["l2_reg"] * l2_reg.item()
 
-        if self.hyper.subp_encoder:
+        if self.hyper.subp_encoder and not self.hyper.naive_loadingvectors:
             kl_divergence_loss = self.encoder.LoadingVectors.KL_Divergence()
             assert kl_divergence_loss >= -1e-10
             return_info.kl_divergence_loss = kl_divergence_loss.item() * self.hyper.kl_divergence_reg
             loss = loss + kl_divergence_loss * self.hyper.kl_divergence_reg
+
+            if self.hyper.encoder_subp_l1_reg > 0:
+                subp_l1_reg_loss = self.encoder.LoadingVectors.l1_Sparsity()
+                return_info.subp_l1_reg_loss = subp_l1_reg_loss.item() * self.hyper.encoder_subp_l1_reg
+                loss = loss + subp_l1_reg_loss * self.hyper.encoder_subp_l1_reg
 
         loss = loss + self.hyper["l2_reg"] * l2_reg
         accuracy = self.decoder.accuracy(ground_truth_tensor, ground_truth_length, decoded_seq)
@@ -286,21 +303,24 @@ class Trainer:
         print("loss_grad", table(self.decoder.named_parameters()).filter(value=lambda x: x.requires_grad).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
 
         self.optimizer.zero_grad()
-        l2_reg = 0
+        l2_reg = 0.0
         for reg_param in self.encoder.regulization_parameters.flatten().values():
-            l2_reg += torch.sum(torch.square(reg_param))
+            if reg_param.requires_grad:
+                l2_reg += torch.sum(torch.square(reg_param))
         for reg_param in self.decoder.regulization_parameters.flatten().values():
-            l2_reg += torch.sum(torch.square(reg_param))
+            if reg_param.requires_grad:
+                l2_reg += torch.sum(torch.square(reg_param))
 
-        loss = self.hyper["l2_reg"] * l2_reg
-        loss.backward()
-        self.justify_grad()
+        if not isinstance(l2_reg, float):
+            loss = self.hyper["l2_reg"] * l2_reg
+            loss.backward()
+            self.justify_grad()
 
-        print("l2 loss", loss.item())
-        print("l2 loss_grad", table(self.encoder.named_parameters()).filter(value=lambda x: x.requires_grad).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
-        print("l2 loss_grad", table(self.decoder.named_parameters()).filter(value=lambda x: x.requires_grad).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
+            print("l2 loss", loss.item())
+            print("l2 loss_grad", table(self.encoder.named_parameters()).filter(value=lambda x: x.requires_grad).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
+            print("l2 loss_grad", table(self.decoder.named_parameters()).filter(value=lambda x: x.requires_grad).map(value=lambda x: (x.abs().mean().item(), self.hyper.learning_rate * x.grad.abs().mean().item())))
 
-        self.optimizer.zero_grad()
+            self.optimizer.zero_grad()
 
     def justify_grad(self):
         for name, param in self.named_parameters():

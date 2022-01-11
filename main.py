@@ -78,7 +78,7 @@ def main(parser, **kwargs):
                 test_loss[name] = tl
                 test_acc[name] = np.stack(ta).mean(0)
 
-            logger.info(f"[{epoch}]/[{hyper['max_epochs']}], train_loss: {train_loss.mean()}, train_acc: {train_acc.mean()}, test_loss: {test_loss.map(value=lambda x: x.mean())}, test_acc: {test_acc.map(value=lambda x: x.mean())}")
+            logger.info(f"[{epoch}]/[{hyper['max_epochs']}], train_loss: {train_loss.mean()}, train_acc: {train_acc.mean()}, test_loss: {test_loss.map(value=lambda x: x.mean())}, test_acc: {test_acc.map(value=lambda x: x.mean())}, {logger.f_name}")
             logger.variable("train_loss", train_loss.mean())
             logger.variable("train_acc", train_acc.mean())
             for key, value in return_info_collector.items():
@@ -99,14 +99,13 @@ def main(parser, **kwargs):
                 test_loss.append(loss)
                 test_acc.append(acc)
 
-            logger.info(f"[{epoch}]/[{hyper['max_epochs']}], train_loss: {train_loss.mean()}, train_acc: {train_acc.mean()}, test_loss: {test_loss.mean()}, test_acc: {test_acc.mean()}")
+            logger.info(f"[{epoch}]/[{hyper['max_epochs']}], train_loss: {train_loss.mean()}, train_acc: {train_acc.mean()}, test_loss: {test_loss.mean()}, test_acc: {test_acc.mean()}, {logger.f_name}")
             logger.variable("train_loss", train_loss.mean())
             logger.variable("train_acc", train_acc.mean())
             for key, value in return_info_collector.items():
                 logger.variable(f"train[{key}]", value)
             logger.variable("test_loss", test_loss.mean())
             logger.variable("test_acc", test_acc.mean())
-
 
         for key, value in t.inspect().items():
             logger.variable(key, value)
@@ -166,12 +165,16 @@ if __name__ == "__main__":
     parser.add_argument("--delta_t", default=20, type=int)
     parser.add_argument("--tau", default=100, type=float)
     parser.add_argument("--subp_encoder", action="store_true")
+    parser.add_argument("--naive_loadingvectors", action="store_true")
+    parser.add_argument("--encoder_convert_to_hidden_space", action="store_true")
+    parser.add_argument("--perfect_decoder", action="store_true")
     parser.add_argument("--encoder_subp_num", default=-1, type=int)
     parser.add_argument("--encoder_subp_sigma2", default=1.0, type=float)
     parser.add_argument("--encoder_subp_covar", default=0.0, type=float)
     parser.add_argument("--encoder_subp_mean", default=0.0, type=float)
     parser.add_argument("--encoder_subp_readout_rank", default=-1, type=int)
     parser.add_argument("--kl_divergence_reg", default=0.001, type=float)
+    parser.add_argument("--encoder_subp_l1_reg", default=1e-5, type=float)
     parser.add_argument("--encoder_dim", default=-1, type=int)
     parser.add_argument("--decoder_dim", default=512, type=int)
     parser.add_argument("--batch_size", default=32, type=int)
