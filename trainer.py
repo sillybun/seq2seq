@@ -36,6 +36,8 @@ class Trainer:
                 "encoder_convert_to_hidden_space": False,
                 "encoder_max_rank": -1,
                 "subp_encoder": False,
+                "encoder_subp_perfect_readout": False,
+                "encoder_subp_zero_mean": False,
                 "naive_loadingvectors": False,
                 "encoder_subp_num": -1,
                 "encoder_subp_sigma2": 1.0,
@@ -59,6 +61,7 @@ class Trainer:
                 "lr_final_decay": 1.0,
                 "max_epochs": 500,
                 "item_lowrank_dim": 2,
+                "no_decoder": False,
                 })
         self.hyper.update_exist(kwargs)
         if self.hyper.key_not_here(kwargs):
@@ -106,6 +109,8 @@ class Trainer:
                     self.hyper.encoder_subp_mean,
                     embedding = self.hyper.embedding,
                     naive_loadingvectors = self.hyper.naive_loadingvectors,
+                    zero_mean=self.hyper.encoder_subp_zero_mean,
+                    perfect_readout=self.hyper.encoder_subp_perfect_readout,
                     ).to(self.device)
         self.encoder.embedding = self.encoder.embedding.to(self.device)
         if self.hyper.subp_encoder or self.hyper.encoder_convert_to_hidden_space:
@@ -132,7 +137,9 @@ class Trainer:
             if vector(self.hyper["freeze_parameter"]).any(lambda x: name.startswith(x)):
                 param.requires_grad = False
 
-        self.dataset = SimulatedDataset(self.hyper["datapath"], self.hyper["input_dim"], self.hyper["batch_size"], train_items_crop=self.hyper.train_items_crop)
+        self.dataset = SimulatedDataset(self.hyper["datapath"], self.hyper["batch_size"], train_items_crop=self.hyper.train_items_crop)
+
+        assert self.dataset.hyper.num_items == self.hyper.input_dim
 
         if self.hyper.load_model_path:
             self.load_state_dict(self.hyper.load_model_path, self.hyper.load_encoder, self.hyper.load_decoder)
@@ -146,7 +153,19 @@ class Trainer:
         final_state = self.encoder(input_encoder, length, only_final_state=True)
         decoded_seq, hidden_state_decoder = self.decoder(final_state, ground_truth_tensor, ground_truth_length, teaching_forcing_ratio=0.5)
 
-        loss = self.decoder.loss(ground_truth_tensor, ground_truth_length, decoded_seq)
+        if self.hyper.no_decoder:
+            assert self.hyper.encoder_convert_to_hidden_space
+            assert self.hyper.encoder_subp_readout_rank > 0
+            if self.hyper.item_lowrank_dim == 1:
+                nature_embedding = torch.tensor([[0.0], [1.0], [-1.0]], device=self.device)
+            else:
+                nature_embedding = torch.tensor([[0.0, 0.0]] + [[math.cos(theta / (self.dataset.hyper.num_items) * math.pi * 2), math.sin(theta / (self.dataset.hyper.num_items) * math.pi * 2)] for theta in range(self.dataset.hyper.num_items)], device=self.device)
+            ground_truth_final_state = torch.gather(nature_embedding.unsqueeze(0).expand(input_encoder.shape[0], -1, -1), 1, ground_truth_tensor.unsqueeze(-1).expand(-1, -1, self.hyper.item_lowrank_dim) + 1).view(input_encoder.shape[0], -1)
+            ground_truth_final_state = nn.functional.pad(ground_truth_final_state, (0, self.hyper.encoder_subp_readout_rank - ground_truth_final_state.shape[1]))
+            loss = (final_state - ground_truth_final_state).square().sum(-1).mean()
+        else:
+            loss = self.decoder.loss(ground_truth_tensor, ground_truth_length, decoded_seq)
+
         return_info.ce_loss = loss.item()
         if self.hyper.residual_loss > 0:
             residual_loss, _ = self.decoder.residual_loss(hidden_state_decoder, ground_truth_length)
@@ -156,15 +175,16 @@ class Trainer:
         else:
             residual_loss = 0
 
-        l2_reg = 0.0
-        for reg_param in self.encoder.regulization_parameters.flatten().values():
-            if reg_param.requires_grad:
-                l2_reg += torch.sum(torch.square(reg_param))
-        for reg_param in self.decoder.regulization_parameters.flatten().values():
-            if reg_param.requires_grad:
-                l2_reg += torch.sum(torch.square(reg_param))
-        if not isinstance(l2_reg, float):
-            return_info.l2_reg = self.hyper["l2_reg"] * l2_reg.item()
+        if self.hyper.l2_reg > 0:
+            l2_reg = 0.0
+            for reg_param in self.encoder.regulization_parameters.flatten().values():
+                if reg_param.requires_grad:
+                    l2_reg += torch.sum(torch.square(reg_param))
+            for reg_param in self.decoder.regulization_parameters.flatten().values():
+                if reg_param.requires_grad:
+                    l2_reg += torch.sum(torch.square(reg_param))
+            if not isinstance(l2_reg, float):
+                return_info.l2_reg = self.hyper["l2_reg"] * l2_reg.item()
 
         if self.hyper.subp_encoder and not self.hyper.naive_loadingvectors:
             kl_divergence_loss = self.encoder.LoadingVectors.KL_Divergence()

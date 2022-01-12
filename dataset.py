@@ -256,17 +256,19 @@ def generate_embedding():
 
 class SimulatedDataset:
 
-    def __init__(self, datapath, num_items, batch_size, train_items_crop=-1, test_items_crop=-1):
+    def __init__(self, datapath, batch_size, train_items_crop=-1, test_items_crop=-1):
         save_args(vars())
         content = table.load(datapath)
-        self.raw_train, self.raw_test = content["train"], content["test"]
-        self.train_data = dataset(self.raw_train, num_items, train_items_crop)
+        self.raw_train, self.raw_test, hyper = content["train"], content["test"], content["hyper"]
+        self.hyper.update(hyper)
+
+        self.train_data = dataset(self.raw_train, self.hyper.num_items, train_items_crop)
         if isinstance(self.raw_test, list):
-            self.test_data = dataset(self.raw_test, num_items, test_items_crop)
+            self.test_data = dataset(self.raw_test, self.hyper.num_items, test_items_crop)
         else:
             assert isinstance(self.raw_test, dict)
             self.raw_test = table(self.raw_test)
-            self.test_data = self.raw_test.map(value=lambda x: dataset(x, num_items, test_items_crop))
+            self.test_data = self.raw_test.map(value=lambda x: dataset(x, self.hyper.num_items, test_items_crop))
         if "info" in content:
             self.info = content.info
 
