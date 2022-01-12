@@ -65,7 +65,7 @@ def low_rank(self, n, r, name="J", order_one_init=False, zero_init=False):
 
 class low_rank_subpopulation_loading_vector(nn.Module):
 
-    def __init__(self, n, vec_num, sub_num, p=None, init_sigma2=1.0, init_covar=0.0, init_mean=0.0):
+    def __init__(self, n, vec_num, sub_num, p=None, init_sigma2=1.0, init_covar=0.0, init_mean=0.0, zero_mean=False):
 
         super().__init__()
         save_args(vars())
@@ -77,7 +77,11 @@ class low_rank_subpopulation_loading_vector(nn.Module):
         P = V @ torch.diag(L ** 0.5)
 
         self.COV_MATRIX_L = nn.ParameterList([nn.Parameter(P.clone()) for _ in range(sub_num)])
-        self.MEAN_MATRIX = nn.ParameterList([nn.Parameter(torch.zeros(vec_num, 1) + init_mean) for _ in range(sub_num)])
+
+        if not zero_mean:
+            self.MEAN_MATRIX = nn.ParameterList([nn.Parameter(torch.zeros(vec_num, 1) + init_mean) for _ in range(sub_num)])
+        else:
+            assert init_mean == 0
 
         if p is None:
             self.P = vector.constant_vector(1/sub_num, sub_num)
@@ -111,7 +115,11 @@ class low_rank_subpopulation_loading_vector(nn.Module):
         self.random_gaussian = [rg.to(self.COV_MATRIX_L[0].device) for rg in self.random_gaussian]
         self.perm_matrix = self.perm_matrix.to(self.COV_MATRIX_L[0].device)
 
-        lv = [(self.COV_MATRIX_L[index] @ self.random_gaussian[index] + self.MEAN_MATRIX[index]).T for index in range(self.hyper.sub_num)]
+        if self.hyper.zero_mean:
+            lv = [(self.COV_MATRIX_L[index] @ self.random_gaussian[index]).T for index in range(self.hyper.sub_num)]
+        else:
+            lv = [(self.COV_MATRIX_L[index] @ self.random_gaussian[index] + self.MEAN_MATRIX[index]).T for index in range(self.hyper.sub_num)]
+
         lv = torch.cat(lv, 0)
         lv = lv[self.perm_matrix, :]
         self.loadingvectors = lv
@@ -127,9 +135,11 @@ class low_rank_subpopulation_loading_vector(nn.Module):
         ret = 0
         for index in range(self.hyper.sub_num):
             cov_m_l = self.COV_MATRIX_L[index]
-            mean_m = self.MEAN_MATRIX[index]
             cov_m = torch.matmul(cov_m_l, cov_m_l.T)
-            ret += 1 / 2 * (-torch.log(torch.det(cov_m)) - self.hyper.vec_num + torch.trace(cov_m) + torch.sum(torch.square(mean_m)))
+            ret += 1 / 2 * (-torch.log(torch.det(cov_m)) - self.hyper.vec_num + torch.trace(cov_m))
+            if not self.hyper.zero_mean:
+                mean_m = self.MEAN_MATRIX[index]
+                ret +=  1/2 * torch.sum(torch.square(mean_m))
         return ret
 
     def l1_Sparsity(self):
@@ -363,17 +373,20 @@ class linear_decoder_rnn(nn.Module):
 
 class low_rank_subpopulation_encoder(nn.Module):
 
-    def __init__(self, tau, delta_t, embedding_dim, noise_sigma, input_dim, encoder_rank, readout_rank, encoder_subp_num, init_sigma2=1.0, init_covar=0.0, init_mean=0.0, input_gain=1.0, embedding=None, naive_loadingvectors=False):
+    def __init__(self, tau, delta_t, embedding_dim, noise_sigma, input_dim, encoder_rank, readout_rank, encoder_subp_num, init_sigma2=1.0, init_covar=0.0, init_mean=0.0, input_gain=1.0, embedding=None, naive_loadingvectors=False, zero_mean=False, perfect_readout=False):
         super().__init__()
         save_args(vars())
 
-        self.hyper.vec_num = input_dim + 2 * encoder_rank + readout_rank
+        if perfect_readout:
+            self.hyper.vec_num = input_dim + 2 * encoder_rank
+        else:
+            self.hyper.vec_num = input_dim + 2 * encoder_rank + readout_rank
+
         if naive_loadingvectors:
             self.LoadingVectors = nn.Parameter(torch.randn(embedding_dim, self.hyper.vec_num))
         else:
-            self.LoadingVectors = low_rank_subpopulation_loading_vector(embedding_dim, self.hyper.vec_num, encoder_subp_num, p=None, init_mean=init_mean, init_covar=init_covar, init_sigma2=init_sigma2)
+            self.LoadingVectors = low_rank_subpopulation_loading_vector(embedding_dim, self.hyper.vec_num, encoder_subp_num, p=None, init_mean=init_mean, init_covar=init_covar, init_sigma2=init_sigma2, zero_mean=zero_mean)
         self.rnn = empty_encoder_rnn(tau, delta_t, embedding_dim, noise_sigma)
-
         if embedding is not None:
             self.embedding = embedding
 
@@ -396,7 +409,10 @@ class low_rank_subpopulation_encoder(nn.Module):
         embedding = loading_vec[:, :(p:=p + self.hyper.input_dim)]
         U = loading_vec[:, p:(p:=p + self.hyper.encoder_rank)]
         V = loading_vec[:, p:(p:=p + self.hyper.encoder_rank)]
-        W = loading_vec[:, p:(p:=p + self.hyper.readout_rank)]
+        if not self.hyper.perfect_readout:
+            W = loading_vec[:, p:(p:=p + self.hyper.readout_rank)]
+        else:
+            W = U[:, :self.hyper.readout_rank]
         assert p == loading_vec.shape[1]
 
         batch_size = u.shape[0]
@@ -428,7 +444,9 @@ class low_rank_subpopulation_encoder(nn.Module):
     @property
     def regulization_parameters(self) -> table:
         if self.hyper.naive_loadingvectors:
-            return table(loading_vectors=self.LoadingVectors)
+            ret = table(loading_vectors=self.LoadingVectors)
+            if self.hyper.zero_mean:
+                ret.loading_vectors_mean = self.LoadingVectors.mean(0)
         return table()
 
     def KL_Divergence(self):
@@ -534,6 +552,8 @@ class encoder(nn.Module):
         encoder_state = table.hieratical(encoder_state)
         if "embedding" in encoder_state and isinstance(self.embedding, nn.Parameter):
             self.embedding.data.copy_(encoder_state["embedding"])
+        if "readout_matrix" in encoder_state:
+            self.readout_matrix.data.copy_(encoder_state["readout_matrix"])
         if "rnn" in encoder_state:
             self.rnn.load_state_dict(encoder_state.rnn)
 

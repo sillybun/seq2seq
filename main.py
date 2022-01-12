@@ -156,6 +156,7 @@ def main(parser, **kwargs):
             raise e
 
     logger.plot_variable_dict(logger.variable_dict, saved_path=path("Log") / path("plot") / path("trainingstep_" + logger.f_name).with_ext("pdf"), hline=["bottom"])
+    logger.info(t.named_parameters(), sep="\n")
     t.save(saved_path)
 
 if __name__ == "__main__":
@@ -169,6 +170,8 @@ if __name__ == "__main__":
     parser.add_argument("--encoder_convert_to_hidden_space", action="store_true")
     parser.add_argument("--perfect_decoder", action="store_true")
     parser.add_argument("--encoder_subp_num", default=-1, type=int)
+    parser.add_argument("--encoder_subp_zero_mean", action="store_true")
+    parser.add_argument("--encoder_subp_perfect_readout", action="store_true")
     parser.add_argument("--encoder_subp_sigma2", default=1.0, type=float)
     parser.add_argument("--encoder_subp_covar", default=0.0, type=float)
     parser.add_argument("--encoder_subp_mean", default=0.0, type=float)
@@ -201,6 +204,7 @@ if __name__ == "__main__":
     parser.add_argument("--residual_loss", default=0, type=float)
     parser.add_argument("--train_items_crop", default=-1, type=int)
     parser.add_argument("--lr_final_decay", default=1.0, type=float)
+    parser.add_argument("--no_decoder", action="store_true")
     hyper, unknown = parser.parse_known_args()
     print("unknown", unknown)
     hyper = table(hyper)
