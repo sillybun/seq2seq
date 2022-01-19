@@ -50,9 +50,10 @@ class Trainer:
                 "perfect_decoder": False,
                 "freeze_parameter": [],
                 "timer_disable": True,
-                "clip_grad": 0.1,
+                "clip_grad": -1,
                 "order_one_init": False,
-                "zero_init": False,
+                "encoder_init_gain": 1.0,
+                "decoder_init_gain": 1.0,
                 "residual_loss": 0,
                 "load_model_path": None,
                 "load_encoder": True,
@@ -91,7 +92,7 @@ class Trainer:
                      encoder_max_rank = self.hyper["encoder_max_rank"],
                      timer = self.timer.timer,
                      order_one_init = self.hyper.order_one_init,
-                     zero_init = self.hyper.zero_init,
+                     init_gain = self.hyper.encoder_init_gain,
                      convert_to_hidden_space = self.hyper.encoder_convert_to_hidden_space,
                      readout_rank = self.hyper.encoder_subp_readout_rank,
                      ).to(self.device)
@@ -128,9 +129,9 @@ class Trainer:
                  decoder_max_rank = self.hyper["decoder_max_rank"],
                  timer = self.timer.timer,
                  order_one_init = self.hyper.order_one_init,
-                 zero_init=self.hyper.zero_init,
-                 encoder_convert_to_hidden_space=self.hyper.subp_encoder or self.hyper.encoder_convert_to_hidden_space,
-                 perfect_decoder=self.hyper.perfect_decoder,
+                 init_gain = self.hyper.decoder_init_gain,
+                 encoder_convert_to_hidden_space = self.hyper.subp_encoder or self.hyper.encoder_convert_to_hidden_space,
+                 perfect_decoder = self.hyper.perfect_decoder,
                  ).to(self.device)
 
         for name, param in self.named_parameters():
@@ -185,6 +186,7 @@ class Trainer:
                     l2_reg += torch.sum(torch.square(reg_param))
             if not isinstance(l2_reg, float):
                 return_info.l2_reg = self.hyper["l2_reg"] * l2_reg.item()
+            loss = loss + self.hyper["l2_reg"] * l2_reg
 
         if self.hyper.subp_encoder and not self.hyper.naive_loadingvectors:
             kl_divergence_loss = self.encoder.LoadingVectors.KL_Divergence()
@@ -197,7 +199,6 @@ class Trainer:
                 return_info.subp_l1_reg_loss = subp_l1_reg_loss.item() * self.hyper.encoder_subp_l1_reg
                 loss = loss + subp_l1_reg_loss * self.hyper.encoder_subp_l1_reg
 
-        loss = loss + self.hyper["l2_reg"] * l2_reg
         accuracy = self.decoder.accuracy(ground_truth_tensor, ground_truth_length, decoded_seq)
         loss.backward()
 
@@ -207,7 +208,7 @@ class Trainer:
         assert return_info.values().all(lambda x: not isinstance(x, torch.Tensor))
         return loss.item(), accuracy, return_info
 
-    def test_step(self, batch, epoch, index):
+    def test_step(self, batch, epoch=-1, index=-1):
         self.encoder.eval()
         self.decoder.eval()
         input_encoder, length, ground_truth_tensor, ground_truth_length, in_train = todevice(batch, device=self.hyper["device"])
@@ -258,6 +259,10 @@ class Trainer:
         hyper.load_model_path = None
         ret = Trainer(**hyper)
         ret.encoder.load_state_dict(saved["encoder state"])
+        if isinstance(ret.encoder.embedding, nn.Parameter):
+            ret.encoder.embedding.data.copy_(saved["embedding"])
+        else:
+            ret.encoder.embedding.copy_(saved["embedding"])
         ret.decoder.load_state_dict(saved["decoder state"])
         return ret
 
@@ -265,10 +270,12 @@ class Trainer:
         if isinstance(filepath, Trainer):
             encoder_loaded = filepath.encoder.state_dict()
             decoder_loaded = filepath.decoder.state_dict()
+            embedding = filepath.encoder.embedding
         else:
             saved = torch.load(filepath, map_location=self.device)
             encoder_loaded = saved["encoder state"]
             decoder_loaded = saved["decoder state"]
+            embedding = saved["embedding"]
         if encoder_state is True:
             pass
         elif encoder_state is False:
@@ -282,6 +289,10 @@ class Trainer:
         elif decoder_state is not None:
             decoder_loaded = {name: param for name, param in decoder_loaded.items() if name in decoder_loaded}
 
+        if isinstance(self.encoder.embedding, nn.Parameter):
+            self.encoder.embedding.data.copy_(saved["embedding"])
+        else:
+            self.encoder.embedding.copy_(saved["embedding"])
         self.encoder.load_state_dict(encoder_loaded)
         self.decoder.load_state_dict(decoder_loaded)
 
