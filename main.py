@@ -37,7 +37,7 @@ def main(parser, **kwargs):
     logger.info("running command: python " + " ".join(sys.argv))
     logger.log_parser(parser)
     logger.info(t.hyper, sep="\n")
-    logger.info(t.named_parameters().map(lambda name, x: (name, x.shape, x.requires_grad)), sep="\n")
+    logger.info(t.named_parameters().map(lambda name, x: (name, x.shape, x.gain, x.requires_grad)), sep="\n")
     logger.info(t.encoder.embedding)
     logger.info(t.named_parameters(), sep="\n")
 
@@ -203,7 +203,8 @@ if __name__ == "__main__":
     parser.add_argument("--save_model_every_epoch_num", default=100, type=int)
     parser.add_argument("--timer_enable", dest="timer_disable", action="store_false")
     parser.add_argument("--clip_grad", default=0.1, type=float)
-    parser.add_argument("--order_one_init", dest="order_one_init", action="store_true")
+    parser.add_argument("--encoder_init_method", default="orthogonal", type=str)
+    parser.add_argument("--decoder_init_method", default="randn", type=str)
     parser.add_argument("--encoder_init_gain", default=1.0, type=float)
     parser.add_argument("--decoder_init_gain", default=1.0, type=float)
     parser.add_argument("--residual_loss", default=0, type=float)

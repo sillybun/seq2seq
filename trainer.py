@@ -51,7 +51,8 @@ class Trainer:
                 "freeze_parameter": [],
                 "timer_disable": True,
                 "clip_grad": -1,
-                "order_one_init": False,
+                "encoder_init_method": "orthogonal",
+                "decoder_init_method": "randn",
                 "encoder_init_gain": 1.0,
                 "decoder_init_gain": 1.0,
                 "residual_loss": 0,
@@ -91,11 +92,12 @@ class Trainer:
                      encoder_bias = self.hyper["encoder_bias"],
                      encoder_max_rank = self.hyper["encoder_max_rank"],
                      timer = self.timer.timer,
-                     order_one_init = self.hyper.order_one_init,
+                     init_method = self.hyper.encoder_init_method,
                      init_gain = self.hyper.encoder_init_gain,
                      convert_to_hidden_space = self.hyper.encoder_convert_to_hidden_space,
                      readout_rank = self.hyper.encoder_subp_readout_rank,
-                     ).to(self.device)
+                     device=self.device,
+                     )
         else:
             self.encoder = low_rank_subpopulation_encoder(self.hyper.tau,
                     self.hyper.delta_t,
@@ -112,8 +114,8 @@ class Trainer:
                     naive_loadingvectors = self.hyper.naive_loadingvectors,
                     zero_mean=self.hyper.encoder_subp_zero_mean,
                     perfect_readout=self.hyper.encoder_subp_perfect_readout,
-                    ).to(self.device)
-        self.encoder.embedding = self.encoder.embedding.to(self.device)
+                    device=self.device,
+                    )
         if self.hyper.subp_encoder or self.hyper.encoder_convert_to_hidden_space:
             decoder_input_dim = self.hyper.encoder_subp_readout_rank
         else:
@@ -122,17 +124,19 @@ class Trainer:
         self.decoder = decoder(self.hyper["decoder_dim"],
                  decoder_input_dim,
                  self.hyper["input_dim"],
+                 encoder_dim=self.hyper.encoder_dim,
                  item_embedding_dim=self.hyper.item_lowrank_dim,
                  linear_decoder = self.hyper["linear_decoder"],
                  decoder_bias = self.hyper["decoder_bias"],
                  encoder_to_decoder_equal_space = self.hyper["encoder_to_decoder_equal_space"],
                  decoder_max_rank = self.hyper["decoder_max_rank"],
                  timer = self.timer.timer,
-                 order_one_init = self.hyper.order_one_init,
+                 init_method = self.hyper.decoder_init_method,
                  init_gain = self.hyper.decoder_init_gain,
                  encoder_convert_to_hidden_space = self.hyper.subp_encoder or self.hyper.encoder_convert_to_hidden_space,
                  perfect_decoder = self.hyper.perfect_decoder,
-                 ).to(self.device)
+                 device=self.device,
+                 )
 
         for name, param in self.named_parameters():
             if vector(self.hyper["freeze_parameter"]).any(lambda x: name.startswith(x)):
@@ -152,7 +156,7 @@ class Trainer:
         self.optimizer.zero_grad()
         input_encoder, length, ground_truth_tensor, ground_truth_length = todevice(batch, device=self.hyper["device"])
         final_state = self.encoder(input_encoder, length, only_final_state=True)
-        decoded_seq, hidden_state_decoder = self.decoder(final_state, ground_truth_tensor, ground_truth_length, teaching_forcing_ratio=0.5)
+        decoded_seq, hidden_state_decoder = self.decoder(final_state, ground_truth_length)
 
         if self.hyper.no_decoder:
             assert self.hyper.encoder_convert_to_hidden_space
@@ -215,7 +219,7 @@ class Trainer:
         with torch.no_grad():
             # hidden_state, final_state = self.encoder(input_encoder, length)
             final_state = self.encoder(input_encoder, length, only_final_state=True)
-            decoded_seq, hidden_state_seq = self.decoder(final_state, torch.zeros_like(ground_truth_tensor).fill_(-1), ground_truth_length, teaching_forcing_ratio=0.0)
+            decoded_seq, hidden_state_seq = self.decoder(final_state, ground_truth_length)
 
             loss = self.decoder.loss(ground_truth_tensor, ground_truth_length, decoded_seq)
             accuracy = self.decoder.accuracy(ground_truth_tensor, ground_truth_length, decoded_seq, by_rank=True)
@@ -231,6 +235,7 @@ class Trainer:
 
     @registered_property
     def optimizer(self):
+        print("generate optimizer")
         return torch.optim.Adam([{"params": self.encoder.parameters()}, {"params": self.decoder.parameters()}], lr=self.hyper["learning_rate"])
 
     @registered_property
@@ -323,7 +328,7 @@ class Trainer:
         self.optimizer.zero_grad()
         input_encoder, length, ground_truth_tensor, ground_truth_length = todevice(batch, device=self.hyper["device"])
         final_state = self.encoder(input_encoder, length, only_final_state=True)
-        decoded_seq, hidden_state_decoder = self.decoder(final_state, ground_truth_tensor, ground_truth_length, teaching_forcing_ratio=0.5)
+        decoded_seq, hidden_state_decoder = self.decoder(final_state, ground_truth_length)
 
         loss = self.decoder.loss(ground_truth_tensor, ground_truth_length, decoded_seq)
         loss.backward()

@@ -109,6 +109,91 @@ def generate_train_test(**kwargs):
     t3 = generate_in_train_label(table(train=train_items, test={"r1": test_items_r1, "r2": test_items_r2, "r3": test_items_r3}))
     t3.save(f"dataset/dataset_train_50_r3_test_r123.db")
 
+class seq_dataset(torch.utils.data.dataset.Dataset):
+
+    def __init__(self, **kwargs):
+        self.hyper = table(item_num=-1,
+                sequence_length = -1,
+                length_crop = -1,
+                delta_t = 20,
+                interval_range = None,
+                delay_range = None,
+                rank_range = None,
+                unique = False,
+                iter_num = 1,
+                batch_repeat_num = 1,
+                device = None,
+                )
+        self.hyper.update_exist(kwargs)
+        self.property = table()
+
+        assert self.hyper.item_num > 0
+        assert self.hyper.sequence_length > 0
+        assert self.hyper.delta_t > 0
+        if isinstance(self.hyper.interval_range, list):
+            assert len(self.hyper.interval_range) == 2
+            self.hyper.interval_range = vector(self.hyper.interval_range)
+        elif isinstance(self.hyper.interval_range, int):
+            self.hyper.interval_range = vector(self.hyper.interval_range, self.hyper.interval_range + 1)
+        else:
+            raise ValueError()
+
+        if isinstance(self.hyper.rank_range, list):
+            assert len(self.hyper.rank_range) == 2
+            self.hyper.rank_range = vector(self.hyper.rank_range)
+        elif isinstance(self.hyper.rank_range, int):
+            self.hyper.rank_range = vector(self.hyper.rank_range, self.hyper.rank_range+1)
+        else:
+            raise ValueError()
+
+        if isinstance(self.hyper.delay_range, list):
+            assert len(self.hyper.delay_range) == 2
+            self.hyper.delay_range = vector(self.hyper.delay_range)
+        elif isinstance(self.hyper.delay_range, int):
+            self.hyper.delay_range = vector(self.hyper.delay_range, self.hyper.delay_range+1)
+        else:
+            raise ValueError()
+
+        if self.hyper.unique:
+            self.property.unique_seq_num = vector.range(self.hyper.sequence_length).map(lambda index: self.hyper.item_num - index).prod()
+            self.property.unique_seq = (vector.range(self.hyper.item_num) ** self.hyper.sequence_length).filter(lambda x: len(set(x)) == self.hyper.sequence_length)
+        else:
+            self.property.unique_seq_num = self.hyper.item_num ** self.hyper.sequence_length
+            self.property.unique_seq = vector.range(self.hyper.item_num) ** self.hyper.sequence_length
+
+    def iter(self, **kwargs):
+        hyper = table(kwargs)
+        hyper.update_where(self.hyper, lambda x: x is None)
+        hyper.update_notexist(self.hyper)
+
+        for _ in range(hyper.iter_num):
+            rank = vector.range(hyper.rank_range[0], hyper.rank_range[1]).sample(hyper.sequence_length)
+            interval = vector.range(hyper.interval_range[0], hyper.interval_range[1]).sample(hyper.sequence_length)
+            delay = vector.range(hyper.delay_range[0], hyper.delay_range[1]).sample()
+            total_length = rank.sum() + interval.sum() + delay
+            if hyper.batch_repeat_num < 1:
+                seq_pool = self.property.unique_seq.split_random([1] * int(1/hyper.batch_repeat_num))
+            else:
+                seq_pool = vector([self.property.unique_seq * hyper.batch_repeat_num])
+
+            for seqs in seq_pool:
+                batch_size = len(seqs)
+                input_tensor = torch.zeros([batch_size, total_length, self.hyper.item_num])
+                if hyper.length_crop == -1:
+                    ground_truth_tensor = torch.LongTensor(seqs, device=hyper.device)
+                else:
+                    ground_truth_tensor = torch.LongTensor(seqs, device=hyper.device)[:, :hyper.length_crop]
+                for r in range(hyper.sequence_length):
+                    on_set = interval[:(r+1)].sum() + rank[:r].sum(default=0)
+                    off_set = interval[:(r+1)].sum() + rank[:(r+1)].sum()
+                    for index in vector.range(len(seqs)):
+                        input_tensor[index, on_set:off_set, seqs[index][r]] = 1.0
+                yield input_tensor, ground_truth_tensor
+
+    def to(self, device):
+        self.hyper.device = device
+        return self
+
 class dataset(torch.utils.data.dataset.Dataset):
 
     def __init__(self, data, num_items, items_crop=-1):
